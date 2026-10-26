@@ -144,3 +144,17 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 > 
 > 1. Put the completed code of `how` into `/home/m/how` and create a requirements document there with my prompts (and an English translation underneath) with the heading "English version below".
 > 2. Find out how to create a plugin for Omarchy and what the publishing process looks like.
+
+---
+
+## Prompt 8: Interactive edit field for executable commands
+
+### Wersja oryginalna (PL):
+> Możesz dodać taką funkcję, że jeżeli z pewnym prawdopodobieństwem odpowiedzią na pytanie jest konkretna komenda, od razu dać tą komendę w polu edycji? 
+> Dodatkowy pomysł: użyć modelu system 1 (n.p. polski model basal) do oceny czy odpowiedź jest dobra.
+> to może ten UX najpierw. Przetestujmy go.
+
+### English version below
+> Can you add a feature where, if with a certain probability the answer to the question is a concrete command, immediately put that command into the edit field?
+> Additional idea: use a System 1 model (e.g. Polish model Basal) to evaluate whether the answer is good.
+> Maybe this UX first. Let's test it.
