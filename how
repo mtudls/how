@@ -49,7 +49,7 @@ Response Rules:
 2. Provide a 1-2 sentence concise explanation right after the code block.
 3. If the user's question is purely conceptual, explanatory, or general (not an actionable command request), do not output a bash code block; answer directly and concisely.
 4. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
-5. Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl.
+5. Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl, and standard modern developer tools (e.g. GitHub CLI 'gh auth switch' to switch accounts without logging out).
 6. Answer in the same language as the question (if asked in Polish, answer in Polish; if asked in English, answer in English)."""
 
 def open_url_in_browser(url):
@@ -736,24 +736,77 @@ def ask_groq(raw_query):
     except Exception as e:
         print(f"\n{RED}✗ Błąd połączenia: {e}{RESET}\n")
 
+def print_help():
+    print(f"\n{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU\n")
+    print(f"{BOLD}Użycie:{RESET}")
+    print(f"  {CYAN}how{RESET}                        Uruchom tryb interaktywny (bez problemów ze znakami basha)")
+    print(f"  {CYAN}how to <pytanie...>{RESET}     np. {DIM}how to ping internet?{RESET}")
+    print(f"  {CYAN}how \"<pytanie...>\"{RESET}      np. {DIM}how \"to switch gh user (log to another account)\"{RESET}")
+    print(f"  {CYAN}how model{RESET}               Wybierz model z listy pobranej z API")
+    print(f"  {CYAN}how model check{RESET}         Przetestuj dostępność i ping wszystkich modeli")
+    print(f"  {CYAN}how auth login{RESET}          Zaloguj się kluczem Groq (otwiera przeglądarkę)")
+    print(f"  {CYAN}how auth status{RESET}         Sprawdź status logowania")
+    print(f"  {CYAN}how auth logout{RESET}         Wyloguj i usuń klucz\n")
+    print(f"{DIM}Wskazówka: Jeśli pytanie zawiera nawiasy '()', średniki ';' lub pipe'y '|', użyj trybu interaktywnego ('how') lub ujmij pytanie w cudzysłów.{RESET}\n")
+
+def interactive_mode():
+    print(f"\n{BOLD}{MAGENTA}◆ how{RESET} {DIM}- Asystent CLI dla Omarchy i Linuksa na Groq LPU{RESET}")
+    print(f"{DIM}[Tryb interaktywny: wpisz dowolne pytanie | 'q', 'exit' lub Ctrl+C aby wyjść]{RESET}\n")
+    
+    while True:
+        try:
+            query = input(f"{CYAN}{BOLD}how ❯{RESET} ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n")
+            break
+            
+        if not query:
+            continue
+        if query.lower() in ("exit", "quit", "q", ":q"):
+            break
+            
+        # Obsługa podkomend w trybie interaktywnym
+        if query.lower() in ("model", "models"):
+            select_model_interactive()
+            print()
+            continue
+        elif query.lower() == "model check":
+            check_all_models()
+            print()
+            continue
+        elif query.lower() == "auth login":
+            auth_login()
+            print()
+            continue
+        elif query.lower() == "auth status":
+            auth_status()
+            print()
+            continue
+        elif query.lower() == "auth logout":
+            auth_logout()
+            print()
+            continue
+        elif query.lower() in ("help", "--help", "-h", "?"):
+            print_help()
+            continue
+
+        ask_groq(query)
+        print()
+
 def main():
     if len(sys.argv) < 2:
-        print(f"\n{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU\n")
-        print(f"{BOLD}Użycie:{RESET}")
-        print(f"  {CYAN}how to <pytanie...>{RESET}     np. {DIM}how to ping internet?{RESET}")
-        print(f"  {CYAN}how <pytanie...>{RESET}        np. {DIM}how auth works on omarchy?{RESET}")
-        print(f"  {CYAN}how model{RESET}               Wybierz model z listy pobranej z API")
-        print(f"  {CYAN}how model check{RESET}         Przetestuj dostępność i ping wszystkich modeli")
-        print(f"  {CYAN}how auth login{RESET}          Zaloguj się kluczem Groq (otwiera przeglądarkę)")
-        print(f"  {CYAN}how auth status{RESET}         Sprawdź status logowania")
-        print(f"  {CYAN}how auth logout{RESET}         Wyloguj i usuń klucz\n")
-        sys.exit(0)
+        if sys.stdin.isatty():
+            interactive_mode()
+            sys.exit(0)
+        else:
+            print_help()
+            sys.exit(0)
 
     args = sys.argv[1:]
     first = args[0].lower()
 
-    if first in ("--help", "-h") and len(args) == 1:
-        main()
+    if first in ("--help", "-h", "help") and len(args) == 1:
+        print_help()
         sys.exit(0)
 
     # Administracyjne podkomendy 'auth':

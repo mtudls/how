@@ -218,3 +218,17 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 
 ### English version below
 > And let keys have names from login.
+
+---
+
+## Prompt 14: Edge case - bash syntax error with unquoted parentheses
+
+### Wersja oryginalna (PL):
+> edge case:
+> how master  ❯ how to switch gh user (log to another account)
+> bash: syntax error near unexpected token `('
+
+### English version below
+> edge case:
+> how master  ❯ how to switch gh user (log to another account)
+> bash: syntax error near unexpected token `('
