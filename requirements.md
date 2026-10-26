@@ -208,3 +208,13 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 
 ### English version below
 > Additionally: during `auth login`, check if there are any existing keys and give an option to select them.
+
+---
+
+## Prompt 13: Name keys during login
+
+### Wersja oryginalna (PL):
+> a klucze niech mają nazwy z loginu
+
+### English version below
+> And let keys have names from login.

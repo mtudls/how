@@ -142,44 +142,54 @@ def load_saved_keys():
             return []
     return []
 
-def save_known_key(api_key, label="Zapamiętany klucz"):
-    """Zapisuje klucz do bazy keys.json (o ile jeszcze go tam nie ma)."""
+def save_known_key(api_key, name="osobisty"):
+    """Zapisuje lub aktualizuje nazwę klucza w keys.json."""
     keys = load_saved_keys()
-    existing = [k.get("key") for k in keys if isinstance(k, dict)]
-    if api_key not in existing:
+    updated = False
+    for item in keys:
+        if isinstance(item, dict) and item.get("key") == api_key:
+            if name:
+                item["name"] = name
+            updated = True
+            break
+    if not updated:
         keys.append({
+            "name": name or "osobisty",
             "key": api_key,
-            "label": label,
             "added_at": time.strftime("%Y-%m-%d %H:%M")
         })
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(KEYS_FILE, "w") as f:
-            json.dump(keys, f, indent=2)
-        os.chmod(KEYS_FILE, 0o600)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(KEYS_FILE, "w") as f:
+        json.dump(keys, f, indent=2)
+    os.chmod(KEYS_FILE, 0o600)
 
 def find_available_keys():
     """Wyszukuje wszystkie dostępne klucze: z keys.json, config.json, env i .env."""
     found = []
     seen = set()
 
-    # 1. Z pliku zapamiętanych kluczy
+    # 1. Z pliku zapamiętanych kluczy (keys.json)
     for item in load_saved_keys():
         k = item.get("key", "").strip()
+        name = item.get("name") or item.get("label") or "osobisty"
         if k and k not in seen:
             seen.add(k)
             found.append({
                 "key": k,
-                "source": item.get("label", "Zapamiętany klucz")
+                "name": name,
+                "source": "zapisany"
             })
 
     # 2. Z obecnego config.json (jeśli jest)
     cfg = load_config()
     current_k = cfg.get("api_key", "").strip()
+    current_name = cfg.get("key_name", "aktywny")
     if current_k and current_k not in seen:
         seen.add(current_k)
         found.append({
             "key": current_k,
-            "source": "Obecnie aktywny klucz"
+            "name": current_name,
+            "source": "aktywny"
         })
 
     # 3. Ze zmiennej środowiskowej GROQ_API_KEY
@@ -188,7 +198,8 @@ def find_available_keys():
         seen.add(env_k)
         found.append({
             "key": env_k,
-            "source": "Zmienna środowiskowa $GROQ_API_KEY"
+            "name": "GROQ_API_KEY (env)",
+            "source": "env"
         })
 
     # 4. Z lokalnego pliku .env (jeśli istnieje)
@@ -203,7 +214,8 @@ def find_available_keys():
                             seen.add(val)
                             found.append({
                                 "key": val,
-                                "source": "Lokalny plik .env"
+                                "name": ".env",
+                                "source": ".env"
                             })
         except Exception:
             pass
@@ -220,15 +232,17 @@ def auth_login():
 
     available_keys = find_available_keys()
     chosen_key = None
+    chosen_name = None
 
     if available_keys:
-        print(f"{BOLD}Wykryto dostępne klucze API:{RESET}\n")
+        print(f"{BOLD}Dostępne klucze API:{RESET}\n")
         for i, item in enumerate(available_keys, 1):
             masked = mask_key(item["key"])
-            print(f"  {CYAN}[{i}]{RESET} {BOLD}{masked}{RESET}  {DIM}({item['source']}){RESET}")
+            name_badge = f"{BOLD}{CYAN}{item['name']:<18}{RESET}"
+            print(f"  {CYAN}[{i}]{RESET} {name_badge} {DIM}{masked}{RESET}")
         
         new_option_idx = len(available_keys) + 1
-        print(f"  {CYAN}[{new_option_idx}]{RESET} {YELLOW}Wprowadź nowy klucz (otwórz przeglądarkę){RESET}")
+        print(f"  {CYAN}[{new_option_idx}]{RESET} {YELLOW}+ Dodaj nowy klucz (otwórz przeglądarkę){RESET}")
         print(f"\n{DIM}[Wybierz numer 1-{new_option_idx} | Enter = [1] | Ctrl+C = anuluj]{RESET}")
         
         try:
@@ -239,10 +253,12 @@ def auth_login():
 
         if not choice or choice == "1":
             chosen_key = available_keys[0]["key"]
+            chosen_name = available_keys[0]["name"]
         elif choice.isdigit():
             idx = int(choice) - 1
             if 0 <= idx < len(available_keys):
                 chosen_key = available_keys[idx]["key"]
+                chosen_name = available_keys[idx]["name"]
             elif idx == len(available_keys):
                 chosen_key = None
             else:
@@ -255,7 +271,7 @@ def auth_login():
             print(f"{RED}✗ Nieprawidłowy wybór.{RESET}\n")
             sys.exit(1)
 
-    # Jeśli nie wybrano z listy lub wybrano 'Wprowadź nowy klucz'
+    # Jeśli nie wybrano z listy lub wybrano '+ Dodaj nowy klucz'
     if not chosen_key:
         print(f"Aby uzyskać lub wygenerować darmowy klucz API, przejdź do:")
         print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
@@ -302,18 +318,28 @@ def auth_login():
             sys.exit(0)
         chosen_key = api_key
 
+        default_name = f"klucz-{len(available_keys) + 1}" if available_keys else "osobisty"
+        print(f"\n{DIM}Podaj nazwę dla tego klucza (np. osobisty, praca, dev):{RESET}")
+        try:
+            name_in = input(f"{BOLD}Nazwa klucza [{default_name}]: {RESET}").strip()
+            chosen_name = name_in or default_name
+        except (KeyboardInterrupt, EOFError):
+            chosen_name = default_name
+
     print(f"\n{DIM}Weryfikacja klucza w API Groq...{RESET}", end="", flush=True)
     is_valid, message = validate_key(chosen_key)
     
     if is_valid:
         cfg = load_config()
         cfg["api_key"] = chosen_key
+        cfg["key_name"] = chosen_name
         # Jeśli model nie był ustawiony lub jest starym 404, ustaw domyślny 120b
         if not cfg.get("model") or cfg.get("model") == "groq/compound":
             cfg["model"] = DEFAULT_MODEL
         save_config(cfg)
-        save_known_key(chosen_key)
+        save_known_key(chosen_key, name=chosen_name)
         print(f"\r{GREEN}✓ Zalogowano pomyślnie!{RESET}             ")
+        print(f"{DIM}Aktywny klucz: {CYAN}{chosen_name}{RESET} {DIM}({mask_key(chosen_key)}){RESET}")
         print(f"{DIM}Aktywny model: {CYAN}{cfg['model']}{RESET}")
         print(f"{DIM}Klucz zapisany w: {CONFIG_FILE}{RESET}\n")
     else:
@@ -323,9 +349,10 @@ def auth_login():
             if force in ("t", "tak", "y", "yes"):
                 cfg = load_config()
                 cfg["api_key"] = chosen_key
+                cfg["key_name"] = chosen_name
                 cfg["model"] = cfg.get("model", DEFAULT_MODEL)
                 save_config(cfg)
-                save_known_key(chosen_key)
+                save_known_key(chosen_key, name=chosen_name)
                 print(f"{GREEN}✓ Klucz został zapisany wymuszeniem.{RESET}\n")
         except (KeyboardInterrupt, EOFError):
             print("\nPrzerwano.")
@@ -335,9 +362,17 @@ def auth_status():
     key = cfg.get("api_key")
     if key:
         masked = mask_key(key)
+        name = cfg.get("key_name")
+        if not name:
+            for item in load_saved_keys():
+                if item.get("key") == key:
+                    name = item.get("name")
+                    break
+        name = name or "osobisty"
         print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
-        print(f"  Model:  {CYAN}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
-        print(f"  Klucz:  {DIM}{masked}{RESET}\n")
+        print(f"  Nazwa klucza: {CYAN}{BOLD}{name}{RESET}")
+        print(f"  Model:        {CYAN}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
+        print(f"  Klucz:        {DIM}{masked}{RESET}\n")
     else:
         print(f"\n{YELLOW}! Nie jesteś zalogowany.{RESET} Użyj: {CYAN}how auth login{RESET}\n")
 
@@ -345,6 +380,7 @@ def auth_logout():
     cfg = load_config()
     if cfg.get("api_key"):
         cfg.pop("api_key", None)
+        cfg.pop("key_name", None)
         save_config(cfg)
         print(f"\n{GREEN}✓ Wylogowano (usunięto aktywną sesję).{RESET}")
         print(f"{DIM}Klucz pozostaje zapamiętany w {KEYS_FILE} do szybkiego wyboru.{RESET}\n")
