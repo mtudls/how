@@ -198,3 +198,13 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 ### English version below
 > Copy the API key from the opened page (or create a new one: 'Create API Key') and paste below:
 > add a keyboard option to cancel here.
+
+---
+
+## Prompt 12: Detect and select from existing API keys in auth login
+
+### Wersja oryginalna (PL):
+> dodatkowo: przy auth login sprawdź czy są jakieś klucze i daj opcję wyboru ich
+
+### English version below
+> Additionally: during `auth login`, check if there are any existing keys and give an option to select them.

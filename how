@@ -18,6 +18,7 @@ import time
 
 CONFIG_DIR = os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+KEYS_FILE = os.path.join(CONFIG_DIR, "keys.json")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_KEYS_URL = "https://console.groq.com/keys"
@@ -129,62 +130,189 @@ def validate_key(api_key):
     except Exception as e:
         return False, f"Błąd połączenia: {e}"
 
+def load_saved_keys():
+    """Wczytuje listę zapamiętanych kluczy z keys.json."""
+    if os.path.exists(KEYS_FILE):
+        try:
+            with open(KEYS_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            return []
+    return []
+
+def save_known_key(api_key, label="Zapamiętany klucz"):
+    """Zapisuje klucz do bazy keys.json (o ile jeszcze go tam nie ma)."""
+    keys = load_saved_keys()
+    existing = [k.get("key") for k in keys if isinstance(k, dict)]
+    if api_key not in existing:
+        keys.append({
+            "key": api_key,
+            "label": label,
+            "added_at": time.strftime("%Y-%m-%d %H:%M")
+        })
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(KEYS_FILE, "w") as f:
+            json.dump(keys, f, indent=2)
+        os.chmod(KEYS_FILE, 0o600)
+
+def find_available_keys():
+    """Wyszukuje wszystkie dostępne klucze: z keys.json, config.json, env i .env."""
+    found = []
+    seen = set()
+
+    # 1. Z pliku zapamiętanych kluczy
+    for item in load_saved_keys():
+        k = item.get("key", "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            found.append({
+                "key": k,
+                "source": item.get("label", "Zapamiętany klucz")
+            })
+
+    # 2. Z obecnego config.json (jeśli jest)
+    cfg = load_config()
+    current_k = cfg.get("api_key", "").strip()
+    if current_k and current_k not in seen:
+        seen.add(current_k)
+        found.append({
+            "key": current_k,
+            "source": "Obecnie aktywny klucz"
+        })
+
+    # 3. Ze zmiennej środowiskowej GROQ_API_KEY
+    env_k = os.environ.get("GROQ_API_KEY", "").strip()
+    if env_k and env_k not in seen:
+        seen.add(env_k)
+        found.append({
+            "key": env_k,
+            "source": "Zmienna środowiskowa $GROQ_API_KEY"
+        })
+
+    # 4. Z lokalnego pliku .env (jeśli istnieje)
+    if os.path.exists(".env"):
+        try:
+            with open(".env", "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("GROQ_API_KEY="):
+                        val = line.split("=", 1)[1].strip().strip("'\"")
+                        if val and val not in seen:
+                            seen.add(val)
+                            found.append({
+                                "key": val,
+                                "source": "Lokalny plik .env"
+                            })
+        except Exception:
+            pass
+
+    return found
+
+def mask_key(k):
+    if len(k) > 10:
+        return k[:7] + "..." + k[-4:]
+    return "***"
+
 def auth_login():
     print(f"\n{BOLD}{MAGENTA}◆ Groq CLI Authentication (Omarchy Helper){RESET}\n")
-    print(f"Aby uzyskać lub wygenerować darmowy klucz API, przejdź do:")
-    print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
 
-    print(f"{DIM}Naciśnij dowolny klawisz, aby otworzyć przeglądarkę (lub 's' / Ctrl+C aby pominąć): {RESET}", end="", flush=True)
-    try:
-        if sys.stdin.isatty():
-            import termios
-            import tty
-            fd = sys.stdin.fileno()
-            old = termios.tcgetattr(fd)
-            try:
-                tty.setraw(fd)
-                ch = sys.stdin.read(1)
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old)
-            print()
-            if ch == '\x03':  # Ctrl+C
-                print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-            elif ch.lower() in ('s', 'n', 'q'):
-                print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-            else:
-                print(f"{CYAN}➜ Otwieram przeglądarkę...{RESET}\n")
-                open_url_in_browser(GROQ_KEYS_URL)
-        else:
-            print()
-    except (KeyboardInterrupt, EOFError):
-        print(f"\n{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-    except Exception:
-        print()
+    available_keys = find_available_keys()
+    chosen_key = None
 
-    print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}")
-    print(f"{DIM}[Opcje klawiszowe: wklej klucz i Enter | Ctrl+C lub pusty Enter = anuluj]{RESET}\n")
-    
-    try:
-        raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...) [Ctrl+C = anuluj]: {RESET}")
-    except (KeyboardInterrupt, EOFError):
-        print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-        sys.exit(0)
+    if available_keys:
+        print(f"{BOLD}Wykryto dostępne klucze API:{RESET}\n")
+        for i, item in enumerate(available_keys, 1):
+            masked = mask_key(item["key"])
+            print(f"  {CYAN}[{i}]{RESET} {BOLD}{masked}{RESET}  {DIM}({item['source']}){RESET}")
         
-    api_key = raw_key.strip().strip("'\"")
-    if not api_key or api_key.lower() in ("q", "quit", "cancel", "anuluj") or api_key.startswith("\x1b"):
-        print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-        sys.exit(0)
+        new_option_idx = len(available_keys) + 1
+        print(f"  {CYAN}[{new_option_idx}]{RESET} {YELLOW}Wprowadź nowy klucz (otwórz przeglądarkę){RESET}")
+        print(f"\n{DIM}[Wybierz numer 1-{new_option_idx} | Enter = [1] | Ctrl+C = anuluj]{RESET}")
+        
+        try:
+            choice = input(f"{BOLD}Wybór [1]: {RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+            sys.exit(0)
+
+        if not choice or choice == "1":
+            chosen_key = available_keys[0]["key"]
+        elif choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(available_keys):
+                chosen_key = available_keys[idx]["key"]
+            elif idx == len(available_keys):
+                chosen_key = None
+            else:
+                print(f"{RED}✗ Nieprawidłowy numer.{RESET}\n")
+                sys.exit(1)
+        elif choice.lower() in ("q", "quit", "cancel", "anuluj"):
+            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+            sys.exit(0)
+        else:
+            print(f"{RED}✗ Nieprawidłowy wybór.{RESET}\n")
+            sys.exit(1)
+
+    # Jeśli nie wybrano z listy lub wybrano 'Wprowadź nowy klucz'
+    if not chosen_key:
+        print(f"Aby uzyskać lub wygenerować darmowy klucz API, przejdź do:")
+        print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
+
+        print(f"{DIM}Naciśnij dowolny klawisz, aby otworzyć przeglądarkę (lub 's' / Ctrl+C aby pominąć): {RESET}", end="", flush=True)
+        try:
+            if sys.stdin.isatty():
+                import termios
+                import tty
+                fd = sys.stdin.fileno()
+                old = termios.tcgetattr(fd)
+                try:
+                    tty.setraw(fd)
+                    ch = sys.stdin.read(1)
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                print()
+                if ch == '\x03':  # Ctrl+C
+                    print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+                elif ch.lower() in ('s', 'n', 'q'):
+                    print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+                else:
+                    print(f"{CYAN}➜ Otwieram przeglądarkę...{RESET}\n")
+                    open_url_in_browser(GROQ_KEYS_URL)
+            else:
+                print()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+        except Exception:
+            print()
+
+        print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}")
+        print(f"{DIM}[Opcje klawiszowe: wklej klucz i Enter | Ctrl+C lub pusty Enter = anuluj]{RESET}\n")
+        
+        try:
+            raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...) [Ctrl+C = anuluj]: {RESET}")
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+            sys.exit(0)
+            
+        api_key = raw_key.strip().strip("'\"")
+        if not api_key or api_key.lower() in ("q", "quit", "cancel", "anuluj") or api_key.startswith("\x1b"):
+            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+            sys.exit(0)
+        chosen_key = api_key
 
     print(f"\n{DIM}Weryfikacja klucza w API Groq...{RESET}", end="", flush=True)
-    is_valid, message = validate_key(api_key)
+    is_valid, message = validate_key(chosen_key)
     
     if is_valid:
         cfg = load_config()
-        cfg["api_key"] = api_key
+        cfg["api_key"] = chosen_key
         # Jeśli model nie był ustawiony lub jest starym 404, ustaw domyślny 120b
         if not cfg.get("model") or cfg.get("model") == "groq/compound":
             cfg["model"] = DEFAULT_MODEL
         save_config(cfg)
+        save_known_key(chosen_key)
         print(f"\r{GREEN}✓ Zalogowano pomyślnie!{RESET}             ")
         print(f"{DIM}Aktywny model: {CYAN}{cfg['model']}{RESET}")
         print(f"{DIM}Klucz zapisany w: {CONFIG_FILE}{RESET}\n")
@@ -194,9 +322,10 @@ def auth_login():
             force = input(f"{YELLOW}Czy mimo to chcesz zapisać ten klucz? (t/N): {RESET}").strip().lower()
             if force in ("t", "tak", "y", "yes"):
                 cfg = load_config()
-                cfg["api_key"] = api_key
+                cfg["api_key"] = chosen_key
                 cfg["model"] = cfg.get("model", DEFAULT_MODEL)
                 save_config(cfg)
+                save_known_key(chosen_key)
                 print(f"{GREEN}✓ Klucz został zapisany wymuszeniem.{RESET}\n")
         except (KeyboardInterrupt, EOFError):
             print("\nPrzerwano.")
@@ -205,7 +334,7 @@ def auth_status():
     cfg = load_config()
     key = cfg.get("api_key")
     if key:
-        masked = key[:6] + "..." + key[-4:] if len(key) > 10 else "***"
+        masked = mask_key(key)
         print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
         print(f"  Model:  {CYAN}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
         print(f"  Klucz:  {DIM}{masked}{RESET}\n")
@@ -213,9 +342,12 @@ def auth_status():
         print(f"\n{YELLOW}! Nie jesteś zalogowany.{RESET} Użyj: {CYAN}how auth login{RESET}\n")
 
 def auth_logout():
-    if os.path.exists(CONFIG_FILE):
-        os.remove(CONFIG_FILE)
-        print(f"\n{GREEN}✓ Wylogowano i usunięto konfigurację.{RESET}\n")
+    cfg = load_config()
+    if cfg.get("api_key"):
+        cfg.pop("api_key", None)
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Wylogowano (usunięto aktywną sesję).{RESET}")
+        print(f"{DIM}Klucz pozostaje zapamiętany w {KEYS_FILE} do szybkiego wyboru.{RESET}\n")
     else:
         print(f"\n{DIM}Brak aktywnej sesji.{RESET}\n")
 
