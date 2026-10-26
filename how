@@ -306,8 +306,7 @@ def select_model_interactive(direct_choice=None):
 
     # Jeśli podano argument bezpośrednio
     if direct_choice:
-        # Jeśli użytkownik podał 'check' lub 'test'
-        if direct_choice.lower() in ("check", "test"):
+        if direct_choice.lower() == "check":
             check_all_models()
             return
 
@@ -605,23 +604,20 @@ def main():
             sys.exit(0)
         # W przeciwnym razie: 'how auth works on omarchy?' to zapytanie użytkownika!
 
-    # Administracyjne podkomendy 'model' / 'models' / 'modelcheck':
+    # Administracyjne podkomendy 'model':
     if first in ("model", "models"):
         if len(args) == 1:
             select_model_interactive()
             sys.exit(0)
         elif len(args) == 2:
             sub = args[1].lower()
-            if sub in ("check", "test"):
+            if sub == "check":
                 check_all_models()
                 sys.exit(0)
             elif sub.isdigit() or "/" in sub:
                 select_model_interactive(args[1])
                 sys.exit(0)
         # W przeciwnym razie to zapytanie użytkownika (np. 'how model selection works')
-    elif first == "modelcheck":
-        check_all_models()
-        sys.exit(0)
 
     # Cała reszta to zapytanie do asystenta (np. 'to ping internet?' lub 'auth works on omarchy?')
     query = " ".join(args)
