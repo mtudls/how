@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""
+how - Ultra-fast AI CLI assistant powered by Groq for Omarchy & Linux developers.
+Zero external dependencies (uses standard library).
+"""
+
+import sys
+import os
+import json
+import getpass
+import urllib.request
+import urllib.error
+import subprocess
+import webbrowser
+import re
+
+CONFIG_DIR = os.path.expanduser("~/.config/how")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+GROQ_KEYS_URL = "https://console.groq.com/keys"
+
+# Rekomendowany domyślny model
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+
+# Nagłówki HTTP (Cloudflare w Groq wymaga prawidłowego User-Agent)
+COMMON_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
+    "Accept": "application/json"
+}
+
+# Kolory ANSI
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+MAGENTA = "\033[35m"
+
+SYSTEM_PROMPT = """You are an ultra-fast, direct CLI 'how-to' assistant for Omarchy (an opinionated developer Linux distribution built on Arch Linux and Hyprland by DHH/Omacom).
+
+Response Rules:
+1. Provide the exact executable bash/terminal command(s) FIRST in a ```bash code block.
+2. Provide a 1-2 sentence concise explanation right after the code block.
+3. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
+4. Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl.
+5. Answer in the same language as the question (if asked in Polish, answer in Polish; if asked in English, answer in English)."""
+
+def open_url_in_browser(url):
+    """Automatycznie otwiera przeglądarkę użytkownika w tle."""
+    try:
+        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        pass
+    try:
+        webbrowser.open(url)
+        return True
+    except Exception:
+        return False
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_config(data):
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    os.chmod(CONFIG_FILE, 0o600)
+
+def fetch_available_models(api_key):
+    """Pobiera listę aktywnych modeli czatowych bezpośrednio z API Groq."""
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {api_key}"
+    }
+    req = urllib.request.Request(GROQ_MODELS_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode("utf-8"))
+                models = data.get("data", [])
+                
+                # Filtrujemy modele nie-tekstowe (np. whisper, guard rails)
+                exclude_keywords = ["whisper", "guard", "safeguard", "orpheus-arabic"]
+                chat_models = []
+                for m in models:
+                    mid = m.get("id", "")
+                    if not any(k in mid.lower() for k in exclude_keywords):
+                        chat_models.append(mid)
+                
+                # Sortowanie: 120b na początku, potem alfabetycznie
+                chat_models.sort(key=lambda x: (0 if "120b" in x else 1, x))
+                return chat_models, None
+    except urllib.error.HTTPError as e:
+        return [], f"Błąd {e.code}: {e.reason}"
+    except Exception as e:
+        return [], str(e)
+    return [], "Nieznany błąd"
+
+def validate_key(api_key):
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {api_key}"
+    }
+    req = urllib.request.Request(GROQ_MODELS_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            return res.status == 200, "OK"
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8")
+            err_json = json.loads(body)
+            msg = err_json.get("error", {}).get("message", e.reason)
+            return False, f"Błąd {e.code}: {msg}"
+        except Exception:
+            return False, f"Błąd {e.code}: {e.reason}"
+    except Exception as e:
+        return False, f"Błąd połączenia: {e}"
+
+def auth_login():
+    print(f"\n{BOLD}{MAGENTA}◆ Groq CLI Authentication (Omarchy Helper){RESET}\n")
+    print(f"{CYAN}➜ Otwieram przeglądarkę z konsolą kluczy Groq...{RESET}")
+    print(f"  {DIM}{GROQ_KEYS_URL}{RESET}\n")
+    
+    open_url_in_browser(GROQ_KEYS_URL)
+    
+    print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}\n")
+    
+    try:
+        raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...): {RESET}")
+    except (KeyboardInterrupt, EOFError):
+        print("\nPrzerwano.")
+        sys.exit(1)
+        
+    api_key = raw_key.strip().strip("'\"")
+    if not api_key:
+        print(f"{RED}✗ Nie podano klucza. Logowanie przerwane.{RESET}")
+        sys.exit(1)
+
+    print(f"\n{DIM}Weryfikacja klucza w API Groq...{RESET}", end="", flush=True)
+    is_valid, message = validate_key(api_key)
+    
+    if is_valid:
+        cfg = load_config()
+        cfg["api_key"] = api_key
+        # Jeśli model nie był ustawiony lub jest starym 404, ustaw domyślny 120b
+        if not cfg.get("model") or cfg.get("model") == "groq/compound":
+            cfg["model"] = DEFAULT_MODEL
+        save_config(cfg)
+        print(f"\r{GREEN}✓ Zalogowano pomyślnie!{RESET}             ")
+        print(f"{DIM}Aktywny model: {CYAN}{cfg['model']}{RESET}")
+        print(f"{DIM}Klucz zapisany w: {CONFIG_FILE}{RESET}\n")
+    else:
+        print(f"\r{RED}✗ Weryfikacja nie powiodła się: {message}{RESET}\n")
+        try:
+            force = input(f"{YELLOW}Czy mimo to chcesz zapisać ten klucz? (t/N): {RESET}").strip().lower()
+            if force in ("t", "tak", "y", "yes"):
+                cfg = load_config()
+                cfg["api_key"] = api_key
+                cfg["model"] = cfg.get("model", DEFAULT_MODEL)
+                save_config(cfg)
+                print(f"{GREEN}✓ Klucz został zapisany wymuszeniem.{RESET}\n")
+        except (KeyboardInterrupt, EOFError):
+            print("\nPrzerwano.")
+
+def auth_status():
+    cfg = load_config()
+    key = cfg.get("api_key")
+    if key:
+        masked = key[:6] + "..." + key[-4:] if len(key) > 10 else "***"
+        print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
+        print(f"  Model:  {CYAN}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
+        print(f"  Klucz:  {DIM}{masked}{RESET}\n")
+    else:
+        print(f"\n{YELLOW}! Nie jesteś zalogowany.{RESET} Użyj: {CYAN}how auth login{RESET}\n")
+
+def auth_logout():
+    if os.path.exists(CONFIG_FILE):
+        os.remove(CONFIG_FILE)
+        print(f"\n{GREEN}✓ Wylogowano i usunięto konfigurację.{RESET}\n")
+    else:
+        print(f"\n{DIM}Brak aktywnej sesji.{RESET}\n")
+
+def select_model_interactive(direct_choice=None):
+    cfg = load_config()
+    api_key = cfg.get("api_key")
+    if not api_key:
+        print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
+        auth_login()
+        cfg = load_config()
+        api_key = cfg.get("api_key")
+        if not api_key:
+            return
+
+    current_model = cfg.get("model", DEFAULT_MODEL)
+
+    print(f"\n{DIM}Pobieranie listy modeli z Groq API...{RESET}", end="", flush=True)
+    models, err = fetch_available_models(api_key)
+    print("\r" + " " * 45 + "\r", end="")
+
+    if err or not models:
+        print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
+        return
+
+    # Jeśli podano argument bezpośrednio
+    if direct_choice:
+        # Można podać numer lub nazwę
+        if direct_choice.isdigit():
+            idx = int(direct_choice) - 1
+            if 0 <= idx < len(models):
+                chosen = models[idx]
+            else:
+                print(f"{RED}✗ Nieprawidłowy numer modelu.{RESET}")
+                return
+        else:
+            chosen = direct_choice
+
+        cfg["model"] = chosen
+        save_config(cfg)
+        print(f"{GREEN}✓ Ustawiono model na:{RESET} {CYAN}{chosen}{RESET}\n")
+        return
+
+    # Wyświetl listę modeli
+    print(f"\n{BOLD}{MAGENTA}◆ Dostępne modele tekstowe w Twoim koncie Groq:{RESET}\n")
+    for i, m in enumerate(models, 1):
+        is_active = (m == current_model)
+        active_badge = f"{GREEN}(✓ aktywny){RESET}" if is_active else ""
+        desc = ""
+        if "120b" in m:
+            desc = f"{YELLOW}[OpenAI 120B - najpotężniejszy i rekomendowany]{RESET}"
+        elif "20b" in m:
+            desc = f"{DIM}[OpenAI 20B - ultra szybki]{RESET}"
+        elif "qwen" in m:
+            desc = f"{DIM}[Qwen 3.8 27B - bardzo szybki]{RESET}"
+            
+        print(f"  {CYAN}[{i}]{RESET} {BOLD}{m:<30}{RESET} {active_badge} {desc}")
+
+    print(f"\n{DIM}Naciśnij Enter, aby zachować obecny ({current_model}), lub podaj numer [1-{len(models)}]:{RESET}")
+    try:
+        choice = input(f"{BOLD}Wybór: {RESET}").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\nAnulowano.")
+        return
+
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(models):
+            chosen = models[idx]
+            cfg["model"] = chosen
+            save_config(cfg)
+            print(f"\n{GREEN}✓ Zmieniono model na:{RESET} {CYAN}{chosen}{RESET}\n")
+        else:
+            print(f"\n{RED}✗ Nieprawidłowy numer.{RESET}\n")
+    elif choice:
+        cfg["model"] = choice
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Zmieniono model na:{RESET} {CYAN}{choice}{RESET}\n")
+    else:
+        print(f"\n{DIM}Pozostawiono model: {current_model}{RESET}\n")
+
+def format_query(raw_query):
+    """
+    Optymalizuje i automatyzuje prompt w kontekście konsoli Omarchy.
+    np. 'how to ping internet?' -> 'In Omarchy console how to ping internet?'
+    np. 'jak zresetować hyprland' -> 'In Omarchy console: jak zresetować hyprland'
+    """
+    q = raw_query.strip()
+    
+    # Jeśli użytkownik już wpisał 'in omarchy' lub 'omarchy', nie dublujemy
+    if "omarchy" in q.lower():
+        return q
+
+    # Sprawdź konstrukcję 'to ...' (np. 'how to ping internet?')
+    if q.lower().startswith("to "):
+        return f"In Omarchy console how {q}"
+    elif q.lower().startswith("how to "):
+        return f"In Omarchy console {q}"
+    else:
+        return f"In Omarchy console: {q}"
+
+def ask_groq(raw_query):
+    cfg = load_config()
+    api_key = cfg.get("api_key")
+    if not api_key:
+        print(f"{YELLOW}! Wymagane pierwsze logowanie.{RESET}")
+        auth_login()
+        cfg = load_config()
+        api_key = cfg.get("api_key")
+        if not api_key:
+            return
+
+    model = cfg.get("model", DEFAULT_MODEL)
+    
+    # Jeśli stary niedziałający model został w configu, automatycznie napraw na 120b
+    if model == "groq/compound":
+        model = DEFAULT_MODEL
+        cfg["model"] = model
+        save_config(cfg)
+
+    # Przygotuj zapytanie zoptymalizowane pod Omarchy
+    optimized_prompt = format_query(raw_query)
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": optimized_prompt}
+        ],
+        "stream": True,
+        "temperature": 0.1
+    }
+
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    req = urllib.request.Request(
+        GROQ_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers
+    )
+
+    print(f"\n{CYAN}{BOLD}how ❯{RESET} {DIM}(model: {model}){RESET}\n")
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            for line in response:
+                line = line.decode("utf-8").strip()
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+        print(f"{RESET}\n")
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode("utf-8")
+        try:
+            err_json = json.loads(err_msg)
+            msg = err_json.get("error", {}).get("message", err_msg)
+        except Exception:
+            msg = err_msg
+            
+        print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}")
+        if e.code == 404:
+            print(f"\n{YELLOW}Wskazówka: Model '{model}' może być niedostępny na Twoim koncie.{RESET}")
+            print(f"Uruchom: {CYAN}how model{RESET} aby wybrać aktywny model.\n")
+        else:
+            print("")
+    except KeyboardInterrupt:
+        print(f"\n{YELLOW}Przerwano przez użytkownika.{RESET}\n")
+    except Exception as e:
+        print(f"\n{RED}✗ Błąd połączenia: {e}{RESET}\n")
+
+def main():
+    if len(sys.argv) < 2:
+        print(f"\n{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU\n")
+        print(f"{BOLD}Użycie:{RESET}")
+        print(f"  {CYAN}how to <pytanie...>{RESET}     np. {DIM}how to ping internet?{RESET}")
+        print(f"  {CYAN}how <pytanie...>{RESET}        np. {DIM}how jak zrestartować dźwięk{RESET}")
+        print(f"  {CYAN}how model{RESET}               Wybierz model z listy pobranej z API")
+        print(f"  {CYAN}how auth login{RESET}          Zaloguj się kluczem Groq (otwiera przeglądarkę)")
+        print(f"  {CYAN}how auth status{RESET}         Sprawdź status logowania")
+        print(f"  {CYAN}how auth logout{RESET}         Wyloguj i usuń klucz\n")
+        sys.exit(0)
+
+    cmd = sys.argv[1].lower()
+    if cmd == "auth":
+        sub = sys.argv[2].lower() if len(sys.argv) > 2 else "status"
+        if sub == "login":
+            auth_login()
+        elif sub == "status":
+            auth_status()
+        elif sub == "logout":
+            auth_logout()
+        else:
+            print(f"{RED}Nieznana komenda auth: {sub}{RESET}")
+    elif cmd in ("model", "models"):
+        arg = sys.argv[2] if len(sys.argv) > 2 else None
+        select_model_interactive(arg)
+    else:
+        # Cała reszta to zapytanie (np. 'to ping internet?' lub 'jak zrestartować hyprland')
+        query = " ".join(sys.argv[1:])
+        ask_groq(query)
+
+if __name__ == "__main__":
+    main()
