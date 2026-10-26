@@ -186,3 +186,15 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 > Additional edge cases:
 > `how master ❯ how auth works on omarchy?`
 > `Nieznana komenda auth: works`
+
+---
+
+## Prompt 11: Cancel option in API key prompt
+
+### Wersja oryginalna (PL):
+> Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:
+> tu dodaj opcję klawiszową aby anulować.
+
+### English version below
+> Copy the API key from the opened page (or create a new one: 'Create API Key') and paste below:
+> add a keyboard option to cancel here.
