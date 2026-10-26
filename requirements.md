@@ -158,3 +158,13 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 > Can you add a feature where, if with a certain probability the answer to the question is a concrete command, immediately put that command into the edit field?
 > Additional idea: use a System 1 model (e.g. Polish model Basal) to evaluate whether the answer is good.
 > Maybe this UX first. Let's test it.
+
+---
+
+## Prompt 9: Confirm browser opening on login
+
+### Wersja oryginalna (PL):
+> doadkowa uwaga do how auth login. Odrazu otwiera przeglądarkę, ale wolałbym, żeby pytał (press any key)
+
+### English version below
+> Additional note for `how auth login`. It immediately opens the browser, but I would prefer if it asked (press any key).

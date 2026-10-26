@@ -130,11 +130,36 @@ def validate_key(api_key):
 
 def auth_login():
     print(f"\n{BOLD}{MAGENTA}◆ Groq CLI Authentication (Omarchy Helper){RESET}\n")
-    print(f"{CYAN}➜ Otwieram przeglądarkę z konsolą kluczy Groq...{RESET}")
-    print(f"  {DIM}{GROQ_KEYS_URL}{RESET}\n")
-    
-    open_url_in_browser(GROQ_KEYS_URL)
-    
+    print(f"Aby uzyskać lub wygenerować darmowy klucz API, przejdź do:")
+    print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
+
+    print(f"{DIM}Naciśnij dowolny klawisz, aby otworzyć przeglądarkę (lub 's' / Ctrl+C aby pominąć): {RESET}", end="", flush=True)
+    try:
+        if sys.stdin.isatty():
+            import termios
+            import tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                ch = sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            print()
+            if ch == '\x03':  # Ctrl+C
+                print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+            elif ch.lower() in ('s', 'n', 'q'):
+                print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+            else:
+                print(f"{CYAN}➜ Otwieram przeglądarkę...{RESET}\n")
+                open_url_in_browser(GROQ_KEYS_URL)
+        else:
+            print()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
+    except Exception:
+        print()
+
     print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}\n")
     
     try:
