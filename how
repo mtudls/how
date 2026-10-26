@@ -161,18 +161,19 @@ def auth_login():
     except Exception:
         print()
 
-    print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}\n")
+    print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}")
+    print(f"{DIM}[Opcje klawiszowe: wklej klucz i Enter | Ctrl+C lub pusty Enter = anuluj]{RESET}\n")
     
     try:
-        raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...): {RESET}")
+        raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...) [Ctrl+C = anuluj]: {RESET}")
     except (KeyboardInterrupt, EOFError):
-        print("\nPrzerwano.")
-        sys.exit(1)
+        print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+        sys.exit(0)
         
     api_key = raw_key.strip().strip("'\"")
-    if not api_key:
-        print(f"{RED}✗ Nie podano klucza. Logowanie przerwane.{RESET}")
-        sys.exit(1)
+    if not api_key or api_key.lower() in ("q", "quit", "cancel", "anuluj") or api_key.startswith("\x1b"):
+        print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
+        sys.exit(0)
 
     print(f"\n{DIM}Weryfikacja klucza w API Groq...{RESET}", end="", flush=True)
     is_valid, message = validate_key(api_key)
