@@ -14,6 +14,7 @@ import subprocess
 import webbrowser
 import re
 import readline
+import time
 
 CONFIG_DIR = os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -217,6 +218,71 @@ def auth_logout():
     else:
         print(f"\n{DIM}Brak aktywnej sesji.{RESET}\n")
 
+def check_all_models():
+    """Testuje dostępność każdego z modeli mikro-zapytaniem i zapisuje status w konfiguracji."""
+    cfg = load_config()
+    api_key = cfg.get("api_key")
+    if not api_key:
+        print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
+        auth_login()
+        cfg = load_config()
+        api_key = cfg.get("api_key")
+        if not api_key:
+            return
+
+    print(f"\n{BOLD}{MAGENTA}◆ Testowanie dostępności modeli w Twoim koncie Groq...{RESET}\n")
+    print(f"{DIM}Pobieranie listy modeli...{RESET}", end="", flush=True)
+    models, err = fetch_available_models(api_key)
+    print("\r" + " " * 35 + "\r", end="")
+
+    if err or not models:
+        print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
+        return
+
+    tested = cfg.get("tested_models", {})
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    for m in models:
+        print(f"  {CYAN}➜{RESET} {BOLD}{m:<35}{RESET} ", end="", flush=True)
+        payload = json.dumps({
+            "model": m,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1
+        }).encode("utf-8")
+        req = urllib.request.Request(GROQ_API_URL, data=payload, headers=headers)
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=8) as res:
+                if res.status == 200:
+                    dt = int((time.time() - t0) * 1000)
+                    print(f"{GREEN}✓ działa{RESET} {DIM}({dt}ms){RESET}")
+                    tested[m] = {"ok": True, "latency_ms": dt}
+                else:
+                    print(f"{RED}✗ błąd ({res.status}){RESET}")
+                    tested[m] = {"ok": False, "error": f"HTTP {res.status}"}
+        except urllib.error.HTTPError as e:
+            try:
+                err_data = json.loads(e.read().decode("utf-8"))
+                msg = err_data.get("error", {}).get("message", e.reason)
+            except Exception:
+                msg = e.reason
+            short_msg = f"{e.code}: {msg}"
+            if len(short_msg) > 45:
+                short_msg = short_msg[:42] + "..."
+            print(f"{RED}✗ {short_msg}{RESET}")
+            tested[m] = {"ok": False, "error": short_msg}
+        except Exception as e:
+            print(f"{RED}✗ {e}{RESET}")
+            tested[m] = {"ok": False, "error": str(e)}
+
+    cfg["tested_models"] = tested
+    save_config(cfg)
+    print(f"\n{GREEN}✓ Zakończono test modeli.{RESET} Wyniki zapisano w: {DIM}{CONFIG_FILE}{RESET}\n")
+
 def select_model_interactive(direct_choice=None):
     cfg = load_config()
     api_key = cfg.get("api_key")
@@ -240,6 +306,11 @@ def select_model_interactive(direct_choice=None):
 
     # Jeśli podano argument bezpośrednio
     if direct_choice:
+        # Jeśli użytkownik podał 'check' lub 'test'
+        if direct_choice.lower() in ("check", "test"):
+            check_all_models()
+            return
+
         # Można podać numer lub nazwę
         if direct_choice.isdigit():
             idx = int(direct_choice) - 1
@@ -256,11 +327,26 @@ def select_model_interactive(direct_choice=None):
         print(f"{GREEN}✓ Ustawiono model na:{RESET} {CYAN}{chosen}{RESET}\n")
         return
 
+    tested = cfg.get("tested_models", {})
+
     # Wyświetl listę modeli
     print(f"\n{BOLD}{MAGENTA}◆ Dostępne modele tekstowe w Twoim koncie Groq:{RESET}\n")
     for i, m in enumerate(models, 1):
         is_active = (m == current_model)
         active_badge = f"{GREEN}(✓ aktywny){RESET}" if is_active else ""
+        
+        # Oznaczenie testu dostępności
+        t_info = tested.get(m)
+        if t_info:
+            if t_info.get("ok"):
+                ms = t_info.get("latency_ms")
+                test_badge = f"{GREEN}[✓ {ms}ms]{RESET}" if ms else f"{GREEN}[✓]{RESET}"
+            else:
+                err_msg = t_info.get("error", "niedostępny")
+                test_badge = f"{RED}[✗ {err_msg}]{RESET}"
+        else:
+            test_badge = ""
+
         desc = ""
         if "120b" in m:
             desc = f"{YELLOW}[OpenAI 120B - najpotężniejszy i rekomendowany]{RESET}"
@@ -269,9 +355,10 @@ def select_model_interactive(direct_choice=None):
         elif "qwen" in m:
             desc = f"{DIM}[Qwen 3.8 27B - bardzo szybki]{RESET}"
             
-        print(f"  {CYAN}[{i}]{RESET} {BOLD}{m:<30}{RESET} {active_badge} {desc}")
+        print(f"  {CYAN}[{i}]{RESET} {BOLD}{m:<32}{RESET} {active_badge} {test_badge} {desc}")
 
     print(f"\n{DIM}Naciśnij Enter, aby zachować obecny ({current_model}), lub podaj numer [1-{len(models)}]:{RESET}")
+    print(f"{DIM}(Wskazówka: uruchom '{CYAN}how model check{RESET}{DIM}', aby zaktualizować statusy działania modeli){RESET}")
     try:
         choice = input(f"{BOLD}Wybór: {RESET}").strip()
     except (KeyboardInterrupt, EOFError):
@@ -298,12 +385,13 @@ def format_query(raw_query):
     """
     Optymalizuje i automatyzuje prompt w kontekście konsoli Omarchy.
     np. 'how to ping internet?' -> 'In Omarchy console how to ping internet?'
+    np. 'auth works on omarchy?' -> 'In Omarchy console: how auth works on omarchy?'
     np. 'jak zresetować hyprland' -> 'In Omarchy console: jak zresetować hyprland'
     """
     q = raw_query.strip()
     
-    # Jeśli użytkownik już wpisał 'in omarchy' lub 'omarchy', nie dublujemy
-    if "omarchy" in q.lower():
+    # Jeśli użytkownik już wpisał 'in omarchy', nie dublujemy
+    if "in omarchy" in q.lower():
         return q
 
     # Sprawdź konstrukcję 'to ...' (np. 'how to ping internet?')
@@ -311,7 +399,12 @@ def format_query(raw_query):
         return f"In Omarchy console how {q}"
     elif q.lower().startswith("how to "):
         return f"In Omarchy console {q}"
+    elif q.lower().startswith("how "):
+        return f"In Omarchy console: {q}"
     else:
+        # np. 'auth works on omarchy?' -> 'In Omarchy console: how auth works on omarchy?'
+        if any(q.lower().startswith(prefix) for prefix in ("auth ", "model ", "display ", "audio ", "network ")):
+            return f"In Omarchy console: how {q}"
         return f"In Omarchy console: {q}"
 
 def save_to_bash_history(cmd):
@@ -480,31 +573,59 @@ def main():
         print(f"\n{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU\n")
         print(f"{BOLD}Użycie:{RESET}")
         print(f"  {CYAN}how to <pytanie...>{RESET}     np. {DIM}how to ping internet?{RESET}")
-        print(f"  {CYAN}how <pytanie...>{RESET}        np. {DIM}how jak zrestartować dźwięk{RESET}")
+        print(f"  {CYAN}how <pytanie...>{RESET}        np. {DIM}how auth works on omarchy?{RESET}")
         print(f"  {CYAN}how model{RESET}               Wybierz model z listy pobranej z API")
+        print(f"  {CYAN}how model check{RESET}         Przetestuj dostępność i ping wszystkich modeli")
         print(f"  {CYAN}how auth login{RESET}          Zaloguj się kluczem Groq (otwiera przeglądarkę)")
         print(f"  {CYAN}how auth status{RESET}         Sprawdź status logowania")
         print(f"  {CYAN}how auth logout{RESET}         Wyloguj i usuń klucz\n")
         sys.exit(0)
 
-    cmd = sys.argv[1].lower()
-    if cmd == "auth":
-        sub = sys.argv[2].lower() if len(sys.argv) > 2 else "status"
-        if sub == "login":
-            auth_login()
-        elif sub == "status":
+    args = sys.argv[1:]
+    first = args[0].lower()
+
+    if first in ("--help", "-h") and len(args) == 1:
+        main()
+        sys.exit(0)
+
+    # Administracyjne podkomendy 'auth':
+    # Tylko jeśli wywołano 'how auth', 'how auth login', 'how auth status', 'how auth logout'
+    if first == "auth":
+        if len(args) == 1:
             auth_status()
-        elif sub == "logout":
-            auth_logout()
-        else:
-            print(f"{RED}Nieznana komenda auth: {sub}{RESET}")
-    elif cmd in ("model", "models"):
-        arg = sys.argv[2] if len(sys.argv) > 2 else None
-        select_model_interactive(arg)
-    else:
-        # Cała reszta to zapytanie (np. 'to ping internet?' lub 'jak zrestartować hyprland')
-        query = " ".join(sys.argv[1:])
-        ask_groq(query)
+            sys.exit(0)
+        elif len(args) == 2 and args[1].lower() in ("login", "status", "logout"):
+            sub = args[1].lower()
+            if sub == "login":
+                auth_login()
+            elif sub == "status":
+                auth_status()
+            elif sub == "logout":
+                auth_logout()
+            sys.exit(0)
+        # W przeciwnym razie: 'how auth works on omarchy?' to zapytanie użytkownika!
+
+    # Administracyjne podkomendy 'model' / 'models' / 'modelcheck':
+    if first in ("model", "models"):
+        if len(args) == 1:
+            select_model_interactive()
+            sys.exit(0)
+        elif len(args) == 2:
+            sub = args[1].lower()
+            if sub in ("check", "test"):
+                check_all_models()
+                sys.exit(0)
+            elif sub.isdigit() or "/" in sub:
+                select_model_interactive(args[1])
+                sys.exit(0)
+        # W przeciwnym razie to zapytanie użytkownika (np. 'how model selection works')
+    elif first == "modelcheck":
+        check_all_models()
+        sys.exit(0)
+
+    # Cała reszta to zapytanie do asystenta (np. 'to ping internet?' lub 'auth works on omarchy?')
+    query = " ".join(args)
+    ask_groq(query)
 
 if __name__ == "__main__":
     main()

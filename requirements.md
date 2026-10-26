@@ -168,3 +168,21 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 
 ### English version below
 > Additional note for `how auth login`. It immediately opens the browser, but I would prefer if it asked (press any key).
+
+---
+
+## Prompt 10: Disambiguate queries vs subcommands & model health check
+
+### Wersja oryginalna (PL):
+> w międzyczasie dodaj how model check (o ile nie gryzie się z nazwami modeli) ((lub modelcheck)) który sprawdza jakiś prosty prompt dla każdego z dostępnych modeli, bo nie każdy jest dostępny.
+> Jeśli sprawdzenie kończy się niepowodzeniem to przy liście modeli dodaj x dla niedziałających.
+> dodatkowe edge-case'y:
+> how master ❯ how auth works on omarchy?
+> Nieznana komenda auth: works
+
+### English version below
+> In the meantime add `how model check` (as long as it doesn't clash with model names) ((or `modelcheck`)) which tests a simple prompt for each available model, because not every model is available.
+> If the check fails, add an `x` next to broken ones in the model list.
+> Additional edge cases:
+> `how master ❯ how auth works on omarchy?`
+> `Nieznana komenda auth: works`
