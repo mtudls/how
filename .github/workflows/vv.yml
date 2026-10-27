@@ -1,0 +1,44 @@
+name: Verification & Validation
+run-name: "V&V: ${{ github.event.head_commit.message || github.ref_name }}"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: Performance check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Benchmark CLI startup latency
+        run: |
+          python3 -c "import tests.test_vv_suite as t; t.test_performance()"
+
+  function:
+    name: Function check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify CLI behavior, prompts & safety filters
+        run: |
+          python3 -c "import tests.test_vv_suite as t; t.test_cache_behavior(); t.test_behavior_and_edge_cases()"

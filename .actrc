@@ -1,0 +1,4 @@
+# act configuration for local workflow simulation
+--artifact-server-addr 127.0.0.1
+--cache-server-addr 127.0.0.1
+--container-architecture linux/amd64

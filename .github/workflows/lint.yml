@@ -1,5 +1,5 @@
-name: Lint & Code Quality
-run-name: "Lint & Quality: ${{ github.event.head_commit.message || github.ref_name }}"
+name: Code Quality
+run-name: "Quality: ${{ github.event.head_commit.message || github.ref_name }}"
 
 on:
   push:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint & V&V Check
+  quality:
+    name: Quality check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -23,29 +23,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Python syntax and compile check
+      - name: Syntax compile check
         run: |
-          python -m py_compile how
-          python -m py_compile tests/test_vv_suite.py
-          python -m py_compile scripts/ai_architect_review.py
-
-      - name: Run Verification & Validation (V&V) Matrix
-        run: |
-          python tests/test_vv_suite.py
-
-      - name: Shell script check
-        run: |
+          python -m py_compile how tests/test_vv_suite.py scripts/ai_architect_review.py
           bash -n install.sh
 
       - name: Install Ruff & Flake8
         run: |
-          python -m pip install --upgrade pip
           pip install ruff flake8
 
-      - name: Ruff Lint Check
+      - name: Lint checks
         run: |
           ruff check how
-
-      - name: Flake8 Check
-        run: |
           flake8 how --max-line-length=120 --extend-ignore=E501,E402,E722,F401,F841,E302,E305

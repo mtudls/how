@@ -1,150 +1,99 @@
 # how
 
-> **Ultra-fast AI CLI assistant for Omarchy & Linux, powered by Groq's LPU.**  
-> Delivers instant, copy-pasteable terminal commands directly in your shell. Zero dependencies (pure Python standard library).
+> Instant Linux & Omarchy terminal commands from natural language. Zero runtime dependencies.
 
 ---
 
-## ⚡ Powered by Groq LPU™
+## What It Does
 
-`how` leverages Groq's groundbreaking LPU™ (Language Processing Unit) architecture to deliver terminal answers with near-instant inference speed and sub-second token streaming.
+`how` translates natural language queries into copy-pasteable terminal commands directly inside your shell.
 
-> [!NOTE]
-> **Free forever for developers:** Thanks to the incredible generosity of the **Groq team and founder Jonathan Ross**, Groq API access is completely **$0 free** (no credit card required). Huge kudos and much `<3` to Groq for giving developers blazingly fast inference hardware!
->
-> ➜ Claim your free API key at **[console.groq.com/keys](https://console.groq.com/keys)**.
+- **Instant Answers**: Sub-second streaming powered by Groq's LPU™ hardware.
+- **Developer-Friendly**: $0 free API access provided by Groq (no credit card required). Kudos to Jonathan Ross & team!
+- **Strict Verification**: If uncertain, answers strictly with `"I don't know"` — no hallucinated syntax.
+- **Sliding Cache**: Repeated commands return in <1ms and extend their TTL on hit (`[cache]`).
+- **Terminal Feedback**: Report broken commands or send suggestions directly from your terminal.
 
 ---
 
-## Installation
+## Installation & Setup
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mdsyseng/how/main/install.sh | bash
+how auth login  # Free key: console.groq.com/keys
 ```
 
-Or clone and link directly into your `$PATH`:
-
+Or manual link:
 ```bash
-git clone https://github.com/mdsyseng/how.git ~/.local/share/how
-ln -s ~/.local/share/how/how ~/.local/bin/how
-```
-
----
-
-## Quickstart
-
-Authenticate with your Groq API key:
-
-```bash
-how auth login
+git clone https://github.com/mdsyseng/how.git ~/.local/share/how && ln -s ~/.local/share/how/how ~/.local/bin/how
 ```
 
 ---
 
-## Usage
+## Everyday Commands
 
 ```bash
-# Ask any natural language question
+# Ask how to accomplish tasks
 how to ping google
 how to convert mov to mp4 with ffmpeg
 how to switch gh user without logout
 
-# Command-only mode (ultra-minimal, zero explanations)
+# Command-only output (clean, no explanations)
 how -0 to find largest files in current directory
 how --low to reload hyprland
 
-# Temporary bypass / custom retention
+# Force fresh response or override cache retention
 how --no-cache to check open ports
 how --retention 1M to install postgres on arch
 
-# Effortless terminal feedback & bug reporting
-how feedback
-how feedback "bluetooth pairing fails with pipewire"
-how --bug to mount btrfs subvolume
+# Send feedback directly from terminal
+how feedback "pipewire switch command failed"
 ```
 
 ---
 
-## Configuration & Management
+## Configuration
 
-Manage models, verbosity, and response caching:
+Adjust behavior and retention preferences:
 
 ```bash
-# Select and test AI models
+# Model selection & latency test
 how model
 how model check
 
 # Output verbosity (zero, low, normal)
 how verbosity zero
 
-# Cache management & sliding retention (m, h, D, M)
-how cache
+# Cache control (m = minutes, h = hours, D = days, M = months)
 how cache retention 7D
-how cache 30m
 how cache clear
 ```
 
-### XDG Paths & Cache Architecture
-
-`how` adheres strictly to XDG Base Directory specifications:
-
-- **Config**: `~/.config/how/config.json` (or `$HOW_CONFIG_DIR`)
-- **Cache**: `~/.cache/how/cache.db` (SQLite3 with sliding expiration)
-
-#### Sliding Retention Units
-- `m` — Minutes (e.g. `30m`)
-- `h` — Hours (e.g. `3h` — default)
-- `D` — Days (e.g. `7D`)
-- `M` — Months (e.g. `1M` = 30 days)
-
-Hits return near-instantly (<1ms), refresh their TTL window, and are marked with `[cache]`.
+Paths:
+- Config: `~/.config/how/config.json`
+- Cache: `~/.cache/how/cache.db` (SQLite3)
 
 ---
 
-## Local Testing & CI Simulation
+## Local Verification & Testing
 
-You can test and verify `how` locally using three levels of isolation:
-
-### Option 1: Native Python (Sub-second V&V)
-
-Runs unit checks, latency benchmarks, cache TTL sliding, and behavioral prompt assertions:
+Run tests and checks locally:
 
 ```bash
+# 1. Native test suite (sub-second performance & behavior checks)
 python3 tests/test_vv_suite.py
-```
 
-### Option 2: Docker Environment
-
-Runs the entire test, lint (`ruff`, `flake8`), and security audit (`bandit`) suite inside a clean Python container:
-
-```bash
+# 2. Containerized pipeline (lint, security, tests)
 docker build -t how-test -f Dockerfile.test .
 docker run --rm how-test
-```
 
-### Option 3: Local GitHub Actions Simulation (`act`)
-
-Simulate and run exact GitHub Actions workflows locally using Docker:
-
-```bash
-# Install gh act extension (if not already installed)
-gh extension install nektos/gh-act
-
-# List all local workflows discovered in .github/workflows/
-gh act -l
-
-# Run the complete push event workflows locally:
-gh act push
-
-# Or run a specific job (e.g. Lint, Security, or Release):
-gh act -j lint
-gh act -j bandit
+# 3. Local GitHub Actions simulation (via act)
+gh act push -j quality
+gh act push -j performance
 ```
 
 ---
 
-## License & AI Disclaimer
+## License
 
 [MIT License](LICENSE) © 2026 Mateusz Dzieliński.
-
-*Disclaimer: Suggestions are generated by large language models. Always review commands before execution. Use at your own risk.*
