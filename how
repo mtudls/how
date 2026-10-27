@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # omarchy:summary=Ask Groq for fast Linux and Omarchy how-to commands
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [to] <query...> | model | auth | history | verbosity
-# omarchy:examples=how to ping google | how -0 to ping google | how verbosity low
+# omarchy:args=[-0|--low] [--no-cache] [to] <query...> | model | auth | history | verbosity | cache
+# omarchy:examples=how to ping google | how -0 to ping google | how cache retention 3h
 """
 how - Ultra-fast AI CLI assistant powered by Groq for Omarchy & Linux developers.
 Zero external dependencies (uses standard library).
@@ -13,10 +13,16 @@ import os
 import json
 import re
 import time
+import hashlib
+import sqlite3
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 COMMANDS_LOG = os.path.join(CONFIG_DIR, "commands.log")
+CACHE_DIR = os.environ.get("HOW_CACHE_DIR") or os.path.join(
+    os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "how"
+)
+CACHE_DB_FILE = os.path.join(CACHE_DIR, "cache.db")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_KEYS_URL = "https://console.groq.com/keys"
@@ -26,6 +32,9 @@ DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 # Domyślny poziom gadatliwości: 'normal' (dostępne: 'zero', 'low', 'normal')
 DEFAULT_VERBOSITY = "normal"
+
+# Domyślny czas retencji pamięci podręcznej: 3 godziny (10800 sekund)
+DEFAULT_CACHE_RETENTION = 3 * 3600
 
 # Nagłówki HTTP (Cloudflare w Groq wymaga prawidłowego User-Agent)
 COMMON_HEADERS = {
@@ -212,11 +221,14 @@ def auth_status():
     cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
     verb = cfg.get("verbosity", DEFAULT_VERBOSITY)
+    retention_sec = get_effective_retention()
+    ret_str = format_retention(retention_sec)
 
     print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
     print(f"  Klucz:     {CYAN}{masked}{RESET} {DIM}(źródło: {source}){RESET}")
     print(f"  Model:     {BOLD}{model}{RESET}")
-    print(f"  Verbosity: {BOLD}{verb}{RESET}\n")
+    print(f"  Verbosity: {BOLD}{verb}{RESET}")
+    print(f"  Cache:     {BOLD}{ret_str}{RESET}\n")
 
 def auth_logout():
     """Wylogowuje usuwając klucz z pliku konfiguracyjnego."""
@@ -434,6 +446,394 @@ def set_verbosity_interactive(new_level=None):
         print(f"\n{RED}✗ Niepoprawny wybór.{RESET}\n")
 
 # -----------------------------------------------------------------------------
+# Pamięć podręczna odpowiedzi (Groq Response Caching) i retencja
+# -----------------------------------------------------------------------------
+
+def parse_retention(val) -> int:
+    """
+    Parsuje czas retencji wg formatu:
+      m - minutes (minuty)
+      h - hours (godziny)
+      D - days (dni)
+      M - months (miesiące)
+    Wspiera także pełne słowa (minut, godzin, dni, miesięcy) oraz wieloelementowe specyfikacje (np. 1D 2h).
+    Wartości '0', 'off', 'wyłącz' wyłączają pamięć podręczną (0 sekund).
+    """
+    if isinstance(val, (int, float)):
+        return max(0, int(val))
+    text = str(val).strip().replace(",", ".")
+    text_lower = text.lower()
+    if text_lower in ("0", "off", "disable", "disabled", "brak", "none", "wylacz", "wyłącz", "false"):
+        return 0
+
+    text = re.sub(r"^(?:retencja|retention|czas|time)\s*(?:=|:|\s)?\s*", "", text, flags=re.IGNORECASE)
+    pattern = r"(\d+(?:\.\d+)?)\s*([a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+)?"
+
+    # Upewnijmy się, że cały ciąg jest poprawną specyfikacją czasu (brak pozostałości innego tekstu)
+    leftover = re.sub(pattern, "", text).strip()
+    if leftover:
+        raise ValueError(f"Nierozpoznany fragment czasu retencji: \"{leftover}\"")
+
+    matches = list(re.finditer(pattern, text))
+    if not matches:
+        raise ValueError(f"Nieprawidłowy format czasu retencji: \"{val}\"")
+
+    WORD_MAP = {
+        # Sekundy
+        "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+        "sek": 1, "sekunda": 1, "sekundy": 1, "sekund": 1, "sekundę": 1, "sekundach": 1,
+        # Minuty
+        "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+        "minuta": 60, "minuty": 60, "minut": 60, "minutę": 60, "minutach": 60,
+        # Godziny
+        "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+        "godz": 3600, "godzina": 3600, "godziny": 3600, "godzin": 3600, "godzinę": 3600, "godzinach": 3600,
+        # Dni
+        "day": 86400, "days": 86400,
+        "dzien": 86400, "dzień": 86400, "dni": 86400, "dnia": 86400, "dniach": 86400,
+        # Tygodnie
+        "wk": 7 * 86400, "week": 7 * 86400, "weeks": 7 * 86400,
+        "tydzien": 7 * 86400, "tydzień": 7 * 86400, "tygodnie": 7 * 86400, "tygodni": 7 * 86400, "tygodniach": 7 * 86400,
+        # Miesiące (30 dni)
+        "mo": 30 * 86400, "mon": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400,
+        "msc": 30 * 86400, "miesiac": 30 * 86400, "miesiąc": 30 * 86400, "miesiaca": 30 * 86400, "miesiąca": 30 * 86400,
+        "miesiace": 30 * 86400, "miesiące": 30 * 86400, "miesiecy": 30 * 86400, "miesięcy": 30 * 86400, "miesiacach": 30 * 86400, "miesiącach": 30 * 86400,
+    }
+
+    total_seconds = 0
+    for m in matches:
+        num = float(m.group(1))
+        unit = m.group(2)
+        if not unit:
+            if len(matches) == 1:
+                int_n = int(num) if num.is_integer() else num
+                raise ValueError(f"Brak jednostki czasu dla wartości {int_n} (użyj: m - minutes, h - hours, D - days, M - months)")
+            else:
+                raise ValueError(f"Brak jednostki czasu dla wartości {num}")
+
+        # Jednostki jednoznakowe z rozróżnieniem wielkości liter:
+        # m - minutes; h - hours; D - days; M - months
+        if unit == "m":
+            multiplier = 60
+        elif unit == "M":
+            multiplier = 30 * 86400
+        elif unit in ("D", "d"):
+            multiplier = 86400
+        elif unit in ("h", "H", "g", "G"):
+            multiplier = 3600
+        elif unit in ("s", "S"):
+            multiplier = 1
+        elif unit in ("w", "W"):
+            multiplier = 7 * 86400
+        else:
+            u_lower = unit.lower()
+            if u_lower in WORD_MAP:
+                multiplier = WORD_MAP[u_lower]
+            else:
+                raise ValueError(f"Nieznana jednostka czasu: \"{unit}\" (użyj: m - minutes, h - hours, D - days, M - months)")
+
+        total_seconds += int(num * multiplier)
+    return total_seconds
+
+def format_retention(sec: int) -> str:
+    """Zwraca czytelny, pełny polski opis czasu retencji ze zwięzłym symbolem (m, h, D, M)."""
+    if sec <= 0:
+        return "wyłączony (0s)"
+    parts = []
+    mo = sec // (30 * 86400)
+    sec_rem = sec % (30 * 86400)
+    d = sec_rem // 86400
+    sec_rem %= 86400
+    h = sec_rem // 3600
+    sec_rem %= 3600
+    m = sec_rem // 60
+    s = sec_rem % 60
+
+    if mo > 0:
+        if mo == 1:
+            parts.append(f"{mo} miesiąc ({mo}M)")
+        elif 2 <= mo <= 4 or (mo > 20 and 2 <= mo % 10 <= 4):
+            parts.append(f"{mo} miesiące ({mo}M)")
+        else:
+            parts.append(f"{mo} miesięcy ({mo}M)")
+    if d > 0:
+        if d == 1:
+            parts.append(f"{d} dzień ({d}D)")
+        else:
+            parts.append(f"{d} dni ({d}D)")
+    if h > 0:
+        if h == 1:
+            parts.append(f"{h} godzina ({h}h)")
+        elif 2 <= h <= 4 or (h > 20 and 2 <= h % 10 <= 4):
+            parts.append(f"{h} godziny ({h}h)")
+        else:
+            parts.append(f"{h} godzin ({h}h)")
+    if m > 0:
+        if m == 1:
+            parts.append(f"{m} minuta ({m}m)")
+        elif 2 <= m <= 4 or (m > 20 and 2 <= m % 10 <= 4):
+            parts.append(f"{m} minuty ({m}m)")
+        else:
+            parts.append(f"{m} minut ({m}m)")
+    if s > 0:
+        parts.append(f"{s}s")
+    return ", ".join(parts) if parts else "0s"
+
+def format_retention_short(sec: int) -> str:
+    """Zwraca krótki format czasu wg notacji: m - minutes, h - hours, D - days, M - months."""
+    if sec < 60:
+        return f"{sec}s"
+    m = sec // 60
+    if m < 60:
+        s = sec % 60
+        return f"{m}m" if s == 0 else f"{m}m {s}s"
+    h = m // 60
+    m_rem = m % 60
+    if h < 24:
+        return f"{h}h" if m_rem == 0 else f"{h}h {m_rem}m"
+    d = h // 24
+    h_rem = h % 24
+    if d < 30:
+        return f"{d}D" if h_rem == 0 else f"{d}D {h_rem}h"
+    M = d // 30
+    d_rem = d % 30
+    return f"{M}M" if d_rem == 0 else f"{M}M {d_rem}D"
+
+def get_effective_retention(override=None):
+    """
+    Zwraca aktywny czas retencji w sekundach wg priorytetów:
+    1. override (flaga --retention / --cache-retention)
+    2. zmienna środowiskowa HOW_CACHE_RETENTION
+    3. wartość z config.json
+    4. domyślnie 3 godziny (DEFAULT_CACHE_RETENTION)
+    """
+    if override is not None:
+        try:
+            return parse_retention(override)
+        except ValueError as e:
+            print(f"{YELLOW}! Nieprawidłowa flaga retencji ({e}), używam bieżącej konfiguracji.{RESET}")
+
+    env_val = os.environ.get("HOW_CACHE_RETENTION", "").strip()
+    if env_val:
+        try:
+            return parse_retention(env_val)
+        except ValueError:
+            pass
+
+    cfg = load_config()
+    if "cache_retention_seconds" in cfg:
+        try:
+            return max(0, int(cfg["cache_retention_seconds"]))
+        except Exception:
+            pass
+
+    if "cache_retention" in cfg:
+        try:
+            return parse_retention(cfg["cache_retention"])
+        except Exception:
+            pass
+
+    return DEFAULT_CACHE_RETENTION
+
+def get_db_connection():
+    """Otwiera połączenie z bazą SQLite cache z automatyczną inicjalizacją tabel."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    conn = sqlite3.connect(CACHE_DB_FILE, timeout=5.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    with conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS response_cache (
+                key TEXT PRIMARY KEY,
+                query TEXT,
+                model TEXT,
+                verbosity TEXT,
+                response TEXT,
+                created_at REAL,
+                expires_at REAL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_expires_at ON response_cache(expires_at)")
+    return conn
+
+def get_cached_response(query, model, verbosity, retention_seconds):
+    """
+    Sprawdza, czy w pamięci podręcznej istnieje aktualna odpowiedź dla zapytania.
+    Zwraca (response_text, created_at) lub None.
+    """
+    if retention_seconds <= 0:
+        return None
+    conn = None
+    try:
+        norm_query = re.sub(r"\s+", " ", query.strip())
+        cache_key = hashlib.sha256(f"{model}:{verbosity}:{norm_query}".encode("utf-8")).hexdigest()
+        now = time.time()
+        conn = get_db_connection()
+        with conn:
+            # Okresowe czyszczenie przedawnionych wpisów
+            conn.execute("DELETE FROM response_cache WHERE expires_at < ?", (now,))
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT response, created_at, expires_at FROM response_cache WHERE key = ?",
+                (cache_key,)
+            )
+            row = cur.fetchone()
+            if row:
+                resp, created_at, expires_at = row
+                if now < expires_at and (now - created_at) <= retention_seconds:
+                    return resp, created_at
+    except Exception:
+        pass
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return None
+
+def save_cached_response(query, model, verbosity, response_text, retention_seconds):
+    """Zapisuje odpowiedź do bazy cache z czasem wygaśnięcia."""
+    if retention_seconds <= 0 or not response_text:
+        return
+    conn = None
+    try:
+        norm_query = re.sub(r"\s+", " ", query.strip())
+        cache_key = hashlib.sha256(f"{model}:{verbosity}:{norm_query}".encode("utf-8")).hexdigest()
+        now = time.time()
+        expires_at = now + retention_seconds
+        conn = get_db_connection()
+        with conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO response_cache (key, query, model, verbosity, response, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (cache_key, query, model, verbosity, response_text, now, expires_at))
+    except Exception:
+        pass
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+def cache_status():
+    """Wyświetla szczegółowy status pamięci podręcznej."""
+    retention_sec = get_effective_retention()
+    ret_str = format_retention(retention_sec)
+    status_label = f"{GREEN}włączony{RESET}" if retention_sec > 0 else f"{YELLOW}wyłączony (0s){RESET}"
+
+    total_entries = 0
+    active_entries = 0
+    expired_entries = 0
+    db_size_kb = 0.0
+
+    if os.path.exists(CACHE_DB_FILE):
+        conn = None
+        try:
+            db_size_kb = os.path.getsize(CACHE_DB_FILE) / 1024.0
+            conn = get_db_connection()
+            now = time.time()
+            with conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM response_cache")
+                total_entries = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM response_cache WHERE expires_at > ?", (now,))
+                active_entries = cur.fetchone()[0]
+                expired_entries = total_entries - active_entries
+        except Exception:
+            pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    print(f"\n{BOLD}{MAGENTA}◆ Pamięć podręczna odpowiedzi (Groq Response Cache){RESET}\n")
+    print(f"  Status:       {status_label}")
+    print(f"  Retencja:     {BOLD}{CYAN}{ret_str}{RESET} {DIM}({retention_sec} s){RESET}")
+    print(f"  Wpisy:        {BOLD}{active_entries}{RESET} aktywnych {DIM}(łącznie: {total_entries}, wygasłych: {expired_entries}){RESET}")
+    print(f"  Rozmiar bazy: {DIM}{db_size_kb:.1f} KB{RESET}")
+    print(f"  Lokalizacja:  {DIM}{CACHE_DB_FILE}{RESET}\n")
+    print(f"{BOLD}Zarządzanie pamięcią podręczną:{RESET}")
+    print(f"  {CYAN}how cache retention <czas>{RESET}   Zmień czas retencji (np. 30m, 3h, 7D, 1M)")
+    print(f"  {CYAN}how cache clear{RESET}              Wyczyść całą pamięć podręczną")
+    print(f"  {CYAN}how cache off / on{RESET}           Wyłącz lub włącz pamięć podręczną")
+    print(f"  {CYAN}how --no-cache <pytanie>{RESET}     Wyślij zapytanie pomijając cache\n")
+
+def cache_clear():
+    """Czyści bazę danych pamięci podręcznej."""
+    count = 0
+    if os.path.exists(CACHE_DB_FILE):
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM response_cache")
+                count = cur.fetchone()[0]
+                cur.execute("DELETE FROM response_cache")
+            try:
+                conn.isolation_level = None
+                conn.execute("VACUUM")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"{RED}✗ Błąd podczas czyszczenia cache: {e}{RESET}\n")
+            return
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    print(f"\n{GREEN}✓ Pamięć podręczna wyczyszczona.{RESET} {DIM}Usunięto {count} wpisów.{RESET}\n")
+
+def cache_set_retention(val=None):
+    """Ustawia nowy czas retencji pamięci podręcznej."""
+    if not val:
+        current_sec = get_effective_retention()
+        current_str = format_retention(current_sec)
+        print(f"\n{BOLD}{MAGENTA}◆ Ustawienie czasu retencji pamięci podręcznej{RESET}\n")
+        print(f"  Aktualna retencja: {BOLD}{CYAN}{current_str}{RESET}\n")
+        print(f"  {BOLD}Format retencji:{RESET} {CYAN}m{RESET} - minutes, {CYAN}h{RESET} - hours, {CYAN}D{RESET} - days, {CYAN}M{RESET} - months")
+        print("  Przykłady:")
+        print("    30m              -> 30 minut")
+        print("    3h               -> 3 godziny (domyślna)")
+        print("    7D               -> 7 dni")
+        print("    1M               -> 1 miesiąc (30 dni)")
+        print("    3M               -> 3 miesiące (90 dni)")
+        print("    0 / off / wyłącz -> wyłączenie cache\n")
+        try:
+            val = input(f"{BOLD}Podaj nowy czas retencji [{current_str}]: {RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{YELLOW}Anulowano.{RESET}\n")
+            return
+        if not val:
+            print(f"\n{DIM}Pozostawiono retencję: {current_str}{RESET}\n")
+            return
+
+    try:
+        sec = parse_retention(val)
+    except ValueError as e:
+        print(f"\n{RED}✗ {e}{RESET}\n")
+        return
+
+    cfg = load_config()
+    cfg["cache_retention_seconds"] = sec
+    cfg["cache_retention"] = str(val).strip()
+    save_config(cfg)
+
+    formatted = format_retention(sec)
+    if sec == 0:
+        print(f"\n{YELLOW}✓ Pamięć podręczna została wyłączona (retencja: 0s).{RESET}\n")
+    else:
+        print(f"\n{GREEN}✓ Zmieniono czas retencji cache na:{RESET} {BOLD}{CYAN}{formatted}{RESET} {DIM}({sec} s){RESET}\n")
+
+# -----------------------------------------------------------------------------
 # Lokalny RAG dla manuali systemowych i Omarchy (tldr, man, --help)
 # -----------------------------------------------------------------------------
 
@@ -614,19 +1014,6 @@ def copy_to_clipboard(text):
             continue
     return False
 
-def print_shell_init(shell="bash"):
-    """Generuje kod integracji powłoki dla synchronizacji historii."""
-    print(f"# how - asystent CLI dla Omarchy (integracja z historią {shell})")
-    print(f"# Dodaj do pliku konfiguracyjnego powłoki lub uruchom: eval \"$(how init)\"")
-    print("how() {")
-    print('    command how "$@"')
-    print('    local exit_code=$?')
-    print('    if [ -f ~/.bash_history ]; then')
-    print('        history -r ~/.bash_history 2>/dev/null')
-    print('    fi')
-    print('    return $exit_code')
-    print("}")
-
 def show_command_history(limit=15, filter_term=None):
     """Wyświetla ostatnie proponowane komendy."""
     if not os.path.exists(COMMANDS_LOG):
@@ -689,7 +1076,7 @@ def extract_executable_command(text):
 
     return lines[0]
 
-def display_suggested_command(command, query=""):
+def display_suggested_command(command, query="", is_cached=False):
     """
     Wypisuje sugerowaną komendę bezpośrednio w konsoli-rodzicu,
     kopiuje ją do schowka i rejestruje w logu oraz historii basha.
@@ -703,25 +1090,16 @@ def display_suggested_command(command, query=""):
     log_command_proposal(query, cmd, executed=False)
     copied = copy_to_clipboard(cmd)
     clip_hint = f" {GREEN}[skopiowano do schowka: wklej Ctrl+Shift+V]{RESET}" if copied else ""
+    cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
 
-    print(f"{BOLD}{CYAN}Sugerowana komenda:{RESET}{clip_hint}")
+    print(f"{BOLD}{CYAN}Sugerowana komenda:{RESET}{cache_tag}{clip_hint}")
     print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
 # -----------------------------------------------------------------------------
 # Główne zapytanie do Groq API
 # -----------------------------------------------------------------------------
 
-def ask_groq(raw_query, copy_only=False, verbosity=None):
-    import urllib.request
-    import urllib.error
-    api_key = get_api_key()
-    if not api_key:
-        print(f"{YELLOW}! Wymagany klucz Groq API.{RESET}")
-        auth_login()
-        api_key = get_api_key()
-        if not api_key:
-            return
-
+def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_retention=None):
     cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
     if model == "groq/compound":
@@ -733,6 +1111,49 @@ def ask_groq(raw_query, copy_only=False, verbosity=None):
         verbosity = cfg.get("verbosity", DEFAULT_VERBOSITY)
     if verbosity not in ("zero", "low", "normal"):
         verbosity = "normal"
+
+    # Sprawdzenie pamięci podręcznej (Cache)
+    retention_sec = get_effective_retention(custom_retention)
+    env_no_cache = os.environ.get("HOW_NO_CACHE") in ("1", "true", "yes")
+    bypass_cache = no_cache or env_no_cache or (retention_sec <= 0)
+
+    if not bypass_cache:
+        cached = get_cached_response(raw_query, model, verbosity, retention_sec)
+        if cached:
+            cached_text, cached_at = cached
+            age_sec = max(0, int(time.time() - cached_at))
+            age_str = format_retention_short(age_sec) + " temu" if age_sec > 0 else "przed chwilą"
+
+            if verbosity != "zero":
+                v_info = f", {verbosity}" if verbosity != "normal" else ""
+                print(f"\n{CYAN}{BOLD}how ❯{RESET} {YELLOW}[cache]{RESET} {DIM}(model: {model}{v_info}, {age_str}){RESET}\n")
+                print(cached_text.strip() + f"{RESET}\n")
+
+            cmd = extract_executable_command(cached_text)
+            if cmd:
+                if verbosity == "zero":
+                    save_to_bash_history(cmd)
+                    log_command_proposal(raw_query, cmd, executed=False)
+                    copied = copy_to_clipboard(cmd)
+                    clip_hint = f" {GREEN}[skopiowano: Ctrl+Shift+V]{RESET}" if copied else ""
+                    print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint} {YELLOW}[cache]{RESET}\n")
+                else:
+                    display_suggested_command(cmd, query=raw_query, is_cached=True)
+            else:
+                if verbosity == "zero":
+                    print(f"{cached_text.strip()} {YELLOW}[cache]{RESET}\n")
+            return
+
+    # Jeśli brak w cache, wymagamy klucza Groq API
+    import urllib.request
+    import urllib.error
+    api_key = get_api_key()
+    if not api_key:
+        print(f"{YELLOW}! Wymagany klucz Groq API.{RESET}")
+        auth_login()
+        api_key = get_api_key()
+        if not api_key:
+            return
 
     optimized_prompt = format_query(raw_query)
     docs_context = get_system_docs_context(raw_query)
@@ -789,6 +1210,11 @@ def ask_groq(raw_query, copy_only=False, verbosity=None):
             print(f"{RESET}\n")
 
         full_text = "".join(full_response)
+
+        # Zapis do pamięci podręcznej jeśli zapytanie powiodło się
+        if not bypass_cache and full_text.strip():
+            save_cached_response(raw_query, model, verbosity, full_text, retention_sec)
+
         cmd = extract_executable_command(full_text)
         if cmd:
             if verbosity == "zero":
@@ -822,7 +1248,7 @@ def ask_groq(raw_query, copy_only=False, verbosity=None):
                 print(f"{CYAN}➜ Automatyczny fallback na model: '{next_model}'...{RESET}\n")
                 cfg["model"] = next_model
                 save_config(cfg)
-                ask_groq(raw_query, copy_only=copy_only, verbosity=verbosity)
+                ask_groq(raw_query, copy_only=copy_only, verbosity=verbosity, no_cache=no_cache, custom_retention=custom_retention)
                 return
             else:
                 print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}\n")
@@ -838,38 +1264,22 @@ def ask_groq(raw_query, copy_only=False, verbosity=None):
 # -----------------------------------------------------------------------------
 
 def print_help():
-    print(f"""{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU
+    print(f"""Usage:
+  {CYAN}how{RESET} [-0|--low] [--no-cache] <query...>
+  {CYAN}how{RESET} <command> [args...]
 
-{BOLD}SPOSÓB UŻYCIA:{RESET}
-  {CYAN}how [to] <pytanie...>{RESET}
-  {CYAN}how "<pytanie...>"{RESET}
-  {CYAN}how [opcje] [to] <pytanie...>{RESET}
-  {CYAN}how <podkomenda> [argumenty]{RESET}
+Commands:
+  {CYAN}auth{RESET} [login|status|logout]   Zarządzanie kluczem Groq API
+  {CYAN}model{RESET} [check]                Wybór i test modeli
+  {CYAN}cache{RESET} [retention|clear]      Pamięć podręczna i retencja (m, h, D, M)
+  {CYAN}verbosity{RESET} [zero|low|normal]  Domyślny poziom szczegółowości
+  {CYAN}history{RESET} [filtr]              Historia proponowanych komend
 
-{BOLD}OPCJE ZAPYTANIA:{RESET}
-  {GREEN}-0, --zero{RESET}             Tryb zerowy: zwraca wyłącznie komendę w bloku kodu
-  {GREEN}--low{RESET}                  Tryb niski: minimalny 1-zdaniowy opis + komenda
-  {GREEN}--normal{RESET}               Tryb normalny (domyślny): zwięzłe wyjaśnienie + komenda
-  {GREEN}-v, --verbosity <tryb>{RESET} Wybór trybu jednorazowo: {DIM}zero, low, normal{RESET}
-  {GREEN}-c, --clip{RESET}             Kopiuj sugerowaną komendę do schowka
-
-{BOLD}PODKOMENDY:{RESET}
-  {CYAN}auth login{RESET}             Logowanie i zapis klucza Groq API
-  {CYAN}auth status{RESET}            Status bieżącej autoryzacji i model
-  {CYAN}auth logout{RESET}            Wylogowanie (usunięcie klucza z konfiguracji)
-
-  {CYAN}model{RESET}                  Interaktywny wybór modelu z listy API Groq
-  {CYAN}model check{RESET}            Test połączenia i opóźnień wszystkich modeli
-
-  {CYAN}verbosity [tryb]{RESET}       Wyświetl lub zmień domyślny poziom gadatliwości
-  {CYAN}history [filtr]{RESET}        Historia ostatnio proponowanych komend
-  {CYAN}init [bash|zsh]{RESET}        Skrypt integracji z historią powłoki
-
-{BOLD}PRZYKŁADY:{RESET}
-  {DIM}how to ping internet?{RESET}
-  {DIM}how -0 to restart pipewire audio{RESET}
-  {DIM}how "to switch gh user (log to another account)"{RESET}
-  {DIM}how verbosity low{RESET}
+Options:
+  {GREEN}-0, --zero{RESET}                   Tylko komenda (brak opisów)
+  {GREEN}--low{RESET}                        Minimalny 1-zdaniowy opis
+  {GREEN}--no-cache{RESET}                   Pomiń pamięć podręczną
+  {GREEN}--retention <czas>{RESET}           Tymczasowy czas retencji (np. 30m, 3h, 7D, 1M)
 """)
 
 def main():
@@ -883,21 +1293,17 @@ def main():
         print_help()
         sys.exit(0)
 
-    # Shell init integration: how init [bash|zsh]
-    if raw_args[0].lower() == "init":
-        shell = raw_args[1] if len(raw_args) > 1 else "bash"
-        print_shell_init(shell)
-        sys.exit(0)
-
     # Podkomenda 'verbosity': how verbosity [poziom]
     if raw_args[0].lower() in ("verbosity", "verbose"):
         target_v = raw_args[1] if len(raw_args) > 1 else None
         set_verbosity_interactive(target_v)
         sys.exit(0)
 
-    # Parsowanie flag (verbosity, clip)
+    # Parsowanie flag (verbosity, clip, cache)
     verbosity = None
     copy_only = False
+    no_cache = False
+    custom_retention = None
     args = []
     i = 0
     while i < len(raw_args):
@@ -928,6 +1334,22 @@ def main():
         elif a_lower.startswith("-v="):
             verbosity = a.split("=", 1)[1].lower()
             i += 1
+        elif a_lower in ("--no-cache", "--fresh", "--refresh"):
+            no_cache = True
+            i += 1
+        elif a_lower in ("--retention", "--cache-retention"):
+            if i + 1 < len(raw_args):
+                custom_retention = raw_args[i + 1]
+                i += 2
+            else:
+                print(f"{RED}✗ Podaj czas retencji po fladze {a} (np. 30m, 3h, 7d, 1mo).{RESET}")
+                sys.exit(1)
+        elif a_lower.startswith("--retention="):
+            custom_retention = a.split("=", 1)[1]
+            i += 1
+        elif a_lower.startswith("--cache-retention="):
+            custom_retention = a.split("=", 1)[1]
+            i += 1
         else:
             args.extend(raw_args[i:])
             break
@@ -937,6 +1359,41 @@ def main():
         sys.exit(0)
 
     first = args[0].lower()
+
+    # Podkomendy 'cache'
+    if first == "cache":
+        if len(args) == 1:
+            cache_status()
+            sys.exit(0)
+        sub = args[1].lower()
+        if sub in ("clear", "clean", "purge", "flush", "reset") and len(args) == 2:
+            cache_clear()
+            sys.exit(0)
+        elif sub in ("status", "info") and len(args) == 2:
+            cache_status()
+            sys.exit(0)
+        elif sub in ("off", "disable", "wyłącz", "wylacz") and len(args) == 2:
+            cache_set_retention("0")
+            sys.exit(0)
+        elif sub in ("on", "enable", "włącz", "wlacz") and len(args) == 2:
+            cache_set_retention("3h")
+            sys.exit(0)
+        elif sub in ("retention", "set"):
+            if len(args) > 2:
+                cache_set_retention(" ".join(args[2:]))
+            else:
+                cache_set_retention(None)
+            sys.exit(0)
+        else:
+            cand_time = " ".join(args[1:])
+            try:
+                # Jeśli sparsuje się poprawnie jako czas, traktujemy jako ustawienie retencji
+                parse_retention(cand_time)
+                cache_set_retention(cand_time)
+                sys.exit(0)
+            except ValueError:
+                # To zapytanie użytkownika (np. 'how cache works on linux')
+                pass
 
     # Uproszczone podkomendy 'auth': login, status, logout
     if first == "auth":
@@ -977,7 +1434,7 @@ def main():
 
     # Cała reszta to zapytanie do asystenta
     query = " ".join(args)
-    ask_groq(query, copy_only=copy_only, verbosity=verbosity)
+    ask_groq(query, copy_only=copy_only, verbosity=verbosity, no_cache=no_cache, custom_retention=custom_retention)
 
 if __name__ == "__main__":
     main()

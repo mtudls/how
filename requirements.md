@@ -317,4 +317,54 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 ### English version below
 > implement idea 1 from ideas.md in concept 1 (local documentation context from tldr/man/--help).
 
+---
+
+## Prompt 22: Response caching with configurable retention
+
+### Wersja oryginalna (PL):
+> dodaj caching odpowiedzi (z domyślną retencją 3 godziny) i z możliwością ustawienia dowolnej retencji n minut godzin dni miesięcy
+
+### English version below
+> add response caching (with default retention of 3 hours) and with the ability to set any retention of n minutes hours days months
+
+---
+
+## Prompt 23: Standardized retention units (m, h, D, M) and [cache] response tag
+
+### Wersja oryginalna (PL):
+> niech retention będzie określane: m - minutes; h - hours; D - days; M - months.
+> Dodatkowo: niech odpowiedź z cache będzie oznaczona [cache]
+
+### English version below
+> Let retention be specified as: m - minutes; h - hours; D - days; M - months.
+> Additionally: let the response from cache be marked [cache].
+
+---
+
+## Prompt 24: Radically simplify help (Omarchy minimalist CLI style)
+
+### Wersja oryginalna (PL):
+> małe szybkie zadanko - uprość readme (radykalnie). Niech ma minimalistyczny styl (wg guidelines omarchy)
+> tzn help.
+
+### English version below
+> Small quick task - radically simplify readme. Let it have a minimalist style (according to Omarchy guidelines).
+> I mean help.
+
+---
+
+## Prompt 25: Remove init command
+
+### Wersja oryginalna (PL):
+> po co jest init?
+> wywalić to!
+
+### English version below
+> What is init for?
+> Remove it!
+
+
+
+
+
 

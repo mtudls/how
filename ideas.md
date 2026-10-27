@@ -28,3 +28,28 @@ Automatyczny, lekki RAG działający po stronie klienta `how`, który przed wys�
 - Zawsze aktualna i dokładna składnia poleceń.
 - Pełne wsparcie dla unikalnych mechanizmów Omarchy bez konieczności fine-tuningu modelu bazowego.
 - Zachowanie szybkości odpowiedzi (brak narzutu przesyłania setek kilobajtów tekstu).
+
+---
+
+## 2. Pamięć podręczna odpowiedzi (Groq Response Caching)
+
+### Zaimplementowane rozwiązanie
+Lokalny cache odpowiedzi w oparciu o bazę SQLite (`~/.cache/how/cache.db`) w trybie WAL:
+1. **Domyślna retencja:** 3 godziny.
+2. **Konfigurowalna retencja:** Standardowe jednostki czasowe:
+   - `m` - minutes (np. `30m`)
+   - `h` - hours (np. `3h`)
+   - `D` - days (np. `7D`, `14D`)
+   - `M` - months (np. `1M`, `3M`)
+   - pełne słowa: `minut`, `godzin`, `dni`, `miesięcy`
+   - wyłączenie cache: `0`, `off`, `wyłącz`
+3. **Oznaczanie odpowiedzi z cache:** Każda odpowiedź zwrócona z pamięci podręcznej jest czytelnie oznaczona tagiem `[cache]`.
+4. **Zarządzanie przez CLI:**
+   - `how cache` / `how cache status` - stan bazy, retencja, liczba wpisów
+   - `how cache retention <czas>` / `how cache <czas>` - zmiana retencji (np. `how cache 7D`)
+   - `how cache clear` - wyczyszczenie pamięci podręcznej i VACUUM
+   - `how cache off` / `how cache on` - włączanie i wyłączanie
+   - `how --no-cache <pytanie>` - jednorazowe pominięcie cache
+   - `how --retention <czas> <pytanie>` - jednorazowe wymuszenie retencji dla zapytania
+5. **Izolacja klucza:** Hasz SHA-256 z modelu, trybu verbosity oraz znormalizowanego zapytania, zapobiegający konfliktom formatów.
+
