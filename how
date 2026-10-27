@@ -148,7 +148,7 @@ def fetch_available_models(api_key):
             if res.status == 200:
                 data = json.loads(res.read().decode("utf-8"))
                 models = data.get("data", [])
-                
+
                 # Filter out non-chat models (e.g. whisper, guard rails)
                 exclude_keywords = ["whisper", "guard", "safeguard", "orpheus-arabic"]
                 chat_models = []
@@ -156,7 +156,7 @@ def fetch_available_models(api_key):
                     mid = m.get("id", "")
                     if not any(k in mid.lower() for k in exclude_keywords):
                         chat_models.append(mid)
-                
+
                 # Sort: 120b first, then alphabetically
                 chat_models.sort(key=lambda x: (0 if "120b" in x else 1, x))
                 return chat_models, None
@@ -849,7 +849,7 @@ def get_tldr_content(cmd):
             if os.path.isfile(target):
                 try:
                     with open(target, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = [l for l in f.read().splitlines() if not l.startswith("Found ")]
+                        lines = [line for line in f.read().splitlines() if not line.startswith("Found ")]
                         return "\n".join(lines[:35]).strip()
                 except Exception:
                     pass
@@ -867,7 +867,7 @@ def get_man_summary(cmd):
             timeout=1
         )
         if proc.returncode == 0 and proc.stdout:
-            lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+            lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
             return "\n".join(lines[:25]).strip()
     except Exception:
         pass
@@ -886,7 +886,7 @@ def get_cli_help(cmd):
         )
         out = proc.stdout if proc.stdout.strip() else proc.stderr
         if out.strip():
-            lines = [l.strip() for l in out.splitlines() if l.strip()]
+            lines = [line.strip() for line in out.splitlines() if line.strip()]
             return "\n".join(lines[:25]).strip()
     except Exception:
         pass
@@ -1007,7 +1007,7 @@ def show_command_history(limit=15, filter_term=None):
 
         if filter_term:
             ft = filter_term.lower()
-            lines = [l for l in lines if ft in l.lower()]
+            lines = [line for line in lines if ft in line.lower()]
 
         print(f"\n{BOLD}{MAGENTA}◆ Command History{RESET}\n")
         if not lines:
@@ -1380,7 +1380,7 @@ def open_feedback_url(query=""):
         print(f"{YELLOW}! Could not open browser automatically. Visit the link above to submit feedback.{RESET}\n")
 
 def print_help():
-    print(f"""Usage:
+    help_text = f"""Usage:
   {CYAN}how{RESET} [-0|--low] [--no-cache] <query...>
   {CYAN}how{RESET} <command> [args...]
 
@@ -1398,7 +1398,8 @@ Options:
   {GREEN}--no-cache{RESET}                   Bypass response cache
   {GREEN}--retention <time>{RESET}           Temporary cache retention (e.g. 30m, 3h, 7D, 1M)
   {GREEN}--feedback, --bug{RESET}            Quick feedback link for the current query
-""")
+"""  # nosec B608
+    print(help_text)
 
 def main():
     if len(sys.argv) < 2:
