@@ -1,47 +1,48 @@
 name: Release
+run-name: "Release: ${{ github.ref_name }}"
 
 on:
   push:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag name (e.g. v1.0.0)'
-        required: true
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Create GitHub Release
+    name: Build & Publish Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
+          python-version: '3.11'
 
-      - name: Extract Tag Name
-        id: get_tag
+      - name: Validate syntax and V&V tests
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          python -m py_compile how
+          python tests/test_vv_suite.py
+          bash -n install.sh
 
-      - name: Create Release
+      - name: Generate SHA256 Checksums
+        run: |
+          sha256sum how install.sh > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.get_tag.outputs.tag }}
-          name: Release ${{ steps.get_tag.outputs.tag }}
-          generate_release_notes: true
           files: |
             how
             install.sh
-            LICENSE
-            README.md
+            SHA256SUMS.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

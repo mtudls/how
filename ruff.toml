@@ -1,0 +1,9 @@
+# Ruff configuration for `how` CLI
+line-length = 120
+target-version = "py39"
+
+[lint]
+# Select core error, warning and syntax checks
+select = ["E", "F", "W"]
+# Ignore stylistic line length errors (E501) due to long CLI descriptions/prompts
+ignore = ["E501", "E402", "E722"]

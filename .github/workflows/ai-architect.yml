@@ -1,4 +1,5 @@
-name: Autonomous AI Architect & V&V Review
+name: AI Architect Review
+run-name: "AI Architect Review: ${{ github.event.head_commit.message || github.ref_name }}"
 
 on:
   schedule:
@@ -13,7 +14,8 @@ permissions:
 
 jobs:
   review:
-    runs_on: ubuntu-latest
+    name: Autonomous Codebase Analysis
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

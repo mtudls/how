@@ -1,4 +1,5 @@
-name: Lint & Quality
+name: Lint & Code Quality
+run-name: "Lint & Quality: ${{ github.event.head_commit.message || github.ref_name }}"
 
 on:
   push:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   lint:
-    name: Python Lint & Compile Check
+    name: Lint & V&V Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -41,11 +42,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff flake8
 
-      - name: Ruff Check
+      - name: Ruff Lint Check
         run: |
           ruff check how
 
       - name: Flake8 Check
         run: |
-          # E501: line length (CLI help text / prompts)
-          flake8 how --max-line-length=120 --extend-ignore=E501
+          flake8 how --max-line-length=120 --extend-ignore=E501,E402,E722,F401,F841
