@@ -1,0 +1,31 @@
+name: Bug Report or Feedback
+description: Report a broken command suggestion, incorrect flag, or unexpected CLI behavior.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve `how`! We aim for zero-friction command generation on Omarchy & Linux.
+  - type: input
+    id: query
+    attributes:
+      label: Query executed
+      description: The exact command or question you asked `how`.
+      placeholder: e.g. how to switch audio output with pactl
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What did `how` suggest?
+      description: Copy-paste the suggested output.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should the correct/working command be?
+      description: (Optional) If you know the actual command or how the tool should have answered.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution / window manager (e.g. Omarchy, Hyprland, Arch, Ubuntu).

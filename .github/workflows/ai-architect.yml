@@ -1,0 +1,37 @@
+name: Autonomous AI Architect & V&V Review
+
+on:
+  schedule:
+    # Runs weekly on Sunday at 03:00 UTC (keeps token usage well below limits)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    # Allows manual trigger at any time from GitHub UI
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    runs_on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Verification & Validation (V&V) Suite
+        run: |
+          python tests/test_vv_suite.py
+
+      - name: Run Autonomous AI Maintainer Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python scripts/ai_architect_review.py

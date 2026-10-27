@@ -1,0 +1,51 @@
+name: Lint & Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Python Lint & Compile Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python syntax and compile check
+        run: |
+          python -m py_compile how
+          python -m py_compile tests/test_vv_suite.py
+          python -m py_compile scripts/ai_architect_review.py
+
+      - name: Run Verification & Validation (V&V) Matrix
+        run: |
+          python tests/test_vv_suite.py
+
+      - name: Shell script check
+        run: |
+          bash -n install.sh
+
+      - name: Install Ruff & Flake8
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff flake8
+
+      - name: Ruff Check
+        run: |
+          ruff check how
+
+      - name: Flake8 Check
+        run: |
+          # E501: line length (CLI help text / prompts)
+          flake8 how --max-line-length=120 --extend-ignore=E501

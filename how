@@ -54,13 +54,13 @@ RED = "\033[31m" if USE_COLOR else ""
 MAGENTA = "\033[35m" if USE_COLOR else ""
 
 def get_system_prompt(verbosity="normal"):
-    """Zwraca dedykowany prompt systemowy w zależności od trybu verbosity (zero, low, normal)."""
+    """Returns dedicated system prompt depending on verbosity mode (zero, low, normal)."""
     base = """You are an ultra-fast, direct CLI 'how-to' assistant for Omarchy (an opinionated developer Linux distribution built on Arch Linux and Hyprland by DHH/Omacom).
 Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl, and standard modern developer tools (e.g. GitHub CLI 'gh auth switch' to switch accounts without logging out).
-Answer in the same language as the question (if asked in Polish, answer in Polish; if asked in English, answer in English).
+Answer concisely and directly in English (or in the language asked if the user explicitly asks in another language).
 
 CRITICAL RULE ON UNCERTAINTY:
-If you are not confident or not sure about the answer, command, or how to accomplish the task, do NOT invent or guess. You MUST answer strictly with: "nie wiem" (or "nie wiem" if asked in Polish, "I don't know" if in English)."""
+If you are not confident or not sure about the answer, command, or how to accomplish the task, do NOT invent or guess. You MUST answer strictly with: "I don't know"."""
 
     if verbosity == "zero":
         return base + """
@@ -69,7 +69,7 @@ Response Rules (STRICT ZERO VERBOSITY):
 1. Provide ONLY the exact executable bash/terminal command inside a single ```bash code block.
 2. Absolutely NO explanatory sentences, comments, headers, or concluding remarks. Only the code block.
 3. If the user's question is purely conceptual or not an actionable command, answer in 1 very short direct sentence without extra text.
-4. If not sure: output only "nie wiem"."""
+4. If not sure: output only "I don't know"."""
 
     elif verbosity == "low":
         return base + """
@@ -78,7 +78,7 @@ Response Rules (LOW VERBOSITY):
 1. Provide the exact executable bash/terminal command FIRST in a ```bash code block if the question is an actionable task.
 2. Provide a single ultra-short sentence (maximum 10 words) right after the code block stating what it does.
 3. If the user's question is purely conceptual, answer in 1 concise sentence.
-4. If not sure: answer "nie wiem"."""
+4. If not sure: answer "I don't know"."""
 
     else:  # normal
         return base + """
@@ -88,7 +88,7 @@ Response Rules (NORMAL VERBOSITY):
 2. Provide a 1-2 sentence concise explanation right after the code block.
 3. If the user's question is purely conceptual, explanatory, or general (not an actionable command request), do not output a bash code block; answer directly and concisely.
 4. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
-5. If not sure: answer "nie wiem"."""
+5. If not sure: answer "I don't know"."""
 
 def open_url_in_browser(url):
     """Automatycznie otwiera przeglądarkę użytkownika w tle."""
@@ -124,10 +124,10 @@ def save_config(data):
         except Exception:
             pass
     except Exception as e:
-        print(f"{YELLOW}! Nie można zapisać konfiguracji do {CONFIG_FILE}: {e}{RESET}")
+        print(f"{YELLOW}! Could not save configuration to {CONFIG_FILE}: {e}{RESET}")
 
 def get_api_key():
-    """Zwraca klucz API ze zmiennej środowiskowej GROQ_API_KEY lub z config.json."""
+    """Returns API key from GROQ_API_KEY environment variable or config.json."""
     env_k = os.environ.get("GROQ_API_KEY", "").strip()
     if env_k:
         return env_k
@@ -135,7 +135,7 @@ def get_api_key():
     return cfg.get("api_key", "").strip() or None
 
 def fetch_available_models(api_key):
-    """Pobiera listę aktywnych modeli czatowych bezpośrednio z API Groq."""
+    """Fetches list of active chat models directly from Groq API."""
     import urllib.request
     import urllib.error
     headers = {
@@ -149,7 +149,7 @@ def fetch_available_models(api_key):
                 data = json.loads(res.read().decode("utf-8"))
                 models = data.get("data", [])
                 
-                # Filtrujemy modele nie-tekstowe (np. whisper, guard rails)
+                # Filter out non-chat models (e.g. whisper, guard rails)
                 exclude_keywords = ["whisper", "guard", "safeguard", "orpheus-arabic"]
                 chat_models = []
                 for m in models:
@@ -157,112 +157,112 @@ def fetch_available_models(api_key):
                     if not any(k in mid.lower() for k in exclude_keywords):
                         chat_models.append(mid)
                 
-                # Sortowanie: 120b na początku, potem alfabetycznie
+                # Sort: 120b first, then alphabetically
                 chat_models.sort(key=lambda x: (0 if "120b" in x else 1, x))
                 return chat_models, None
     except urllib.error.HTTPError as e:
-        return [], f"Błąd {e.code}: {e.reason}"
+        return [], f"Error {e.code}: {e.reason}"
     except Exception as e:
         return [], str(e)
-    return [], "Nieznany błąd"
+    return [], "Unknown error"
 
 # -----------------------------------------------------------------------------
-# Uproszczona obsługa Auth (login / status / logout)
+# Auth handling (login / status / logout)
 # -----------------------------------------------------------------------------
 
 def auth_login():
-    """Proste logowanie kluczem API Groq."""
-    print(f"\n{BOLD}{MAGENTA}◆ Logowanie do Groq API (Omarchy Helper){RESET}\n")
-    print("Darmowy klucz API uzyskasz na:")
+    """Simple login with Groq API key."""
+    print(f"\n{BOLD}{MAGENTA}◆ Groq API Authentication (Omarchy Helper){RESET}\n")
+    print("Get your free API key at:")
     print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
 
     try:
-        ans = input(f"{DIM}Czy otworzyć stronę w przeglądarce? [T/n]: {RESET}").strip().lower()
-        if ans in ("", "t", "y", "tak", "yes"):
+        ans = input(f"{DIM}Open page in browser? [Y/n]: {RESET}").strip().lower()
+        if ans in ("", "y", "yes", "t", "tak"):
             open_url_in_browser(GROQ_KEYS_URL)
     except (KeyboardInterrupt, EOFError):
-        print(f"\n{YELLOW}Anulowano.{RESET}\n")
+        print(f"\n{YELLOW}Cancelled.{RESET}\n")
         return
 
     try:
-        key = input(f"\n{BOLD}Wklej Groq API Key (gsk_...): {RESET}").strip()
+        key = input(f"\n{BOLD}Paste your Groq API Key (gsk_...): {RESET}").strip()
     except (KeyboardInterrupt, EOFError):
-        print(f"\n{YELLOW}Anulowano.{RESET}\n")
+        print(f"\n{YELLOW}Cancelled.{RESET}\n")
         return
 
     if not key:
-        print(f"{RED}✗ Nie podano klucza.{RESET}\n")
+        print(f"{RED}✗ No API key provided.{RESET}\n")
         return
 
-    print(f"{DIM}Weryfikacja klucza API...{RESET}", end="", flush=True)
+    print(f"{DIM}Verifying API key...{RESET}", end="", flush=True)
     models, err = fetch_available_models(key)
     print("\r" + " " * 35 + "\r", end="")
 
     if err:
-        print(f"{RED}✗ Błąd weryfikacji: {err}{RESET}")
-        print(f"{DIM}Sprawdź czy klucz jest poprawny.{RESET}\n")
+        print(f"{RED}✗ Verification error: {err}{RESET}")
+        print(f"{DIM}Please check if the key is valid.{RESET}\n")
         return
 
     cfg = load_config()
     cfg["api_key"] = key
     save_config(cfg)
-    print(f"{GREEN}✓ Zalogowano pomyślnie!{RESET} Klucz zapisano w: {DIM}{CONFIG_FILE}{RESET}\n")
+    print(f"{GREEN}✓ Logged in successfully!{RESET} Key saved in: {DIM}{CONFIG_FILE}{RESET}\n")
 
 def auth_status():
-    """Wyświetla aktualny status autoryzacji."""
+    """Displays current authentication status."""
     key = get_api_key()
     if not key:
-        print(f"\n{YELLOW}! Brak aktywnego klucza Groq API.{RESET}")
-        print(f"{DIM}Zaloguj się: {CYAN}how auth login{RESET} lub ustaw zmienną {CYAN}GROQ_API_KEY{RESET}\n")
+        print(f"\n{YELLOW}! No active Groq API key.{RESET}")
+        print(f"{DIM}Login with: {CYAN}how auth login{RESET} or set {CYAN}GROQ_API_KEY{RESET}\n")
         return
 
     masked = key[:7] + "..." + key[-4:] if len(key) > 11 else "***"
-    source = "zmienna środowiskowa GROQ_API_KEY" if os.environ.get("GROQ_API_KEY") else CONFIG_FILE
+    source = "GROQ_API_KEY environment variable" if os.environ.get("GROQ_API_KEY") else CONFIG_FILE
     cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
     verb = cfg.get("verbosity", DEFAULT_VERBOSITY)
     retention_sec = get_effective_retention()
     ret_str = format_retention(retention_sec)
 
-    print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
-    print(f"  Klucz:     {CYAN}{masked}{RESET} {DIM}(źródło: {source}){RESET}")
+    print(f"\n{GREEN}✓ Authenticated with Groq API{RESET}")
+    print(f"  Key:       {CYAN}{masked}{RESET} {DIM}(source: {source}){RESET}")
     print(f"  Model:     {BOLD}{model}{RESET}")
     print(f"  Verbosity: {BOLD}{verb}{RESET}")
     print(f"  Cache:     {BOLD}{ret_str}{RESET}\n")
 
 def auth_logout():
-    """Wylogowuje usuwając klucz z pliku konfiguracyjnego."""
+    """Logs out by removing API key from config."""
     cfg = load_config()
     if cfg.get("api_key"):
         cfg.pop("api_key", None)
         save_config(cfg)
-        print(f"\n{GREEN}✓ Wylogowano.{RESET} Usunięto klucz z {CONFIG_FILE}.\n")
+        print(f"\n{GREEN}✓ Logged out.{RESET} Removed API key from {CONFIG_FILE}.\n")
     else:
-        print(f"\n{DIM}Brak zapisanego klucza w {CONFIG_FILE}.{RESET}\n")
+        print(f"\n{DIM}No saved key in {CONFIG_FILE}.{RESET}\n")
 
 # -----------------------------------------------------------------------------
-# Zarządzanie modelami i verbosity
+# Model & verbosity management
 # -----------------------------------------------------------------------------
 
 def check_all_models():
-    """Testuje dostępność każdego z modeli mikro-zapytaniem."""
+    """Tests availability of all models with a micro-query."""
     import urllib.request
     import urllib.error
     api_key = get_api_key()
     if not api_key:
-        print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
+        print(f"{YELLOW}! Please log in first.{RESET}")
         auth_login()
         api_key = get_api_key()
         if not api_key:
             return
 
-    print(f"\n{BOLD}{MAGENTA}◆ Testowanie dostępności modeli w koncie Groq...{RESET}\n")
-    print(f"{DIM}Pobieranie listy modeli...{RESET}", end="", flush=True)
+    print(f"\n{BOLD}{MAGENTA}◆ Testing model availability in your Groq account...{RESET}\n")
+    print(f"{DIM}Fetching model list...{RESET}", end="", flush=True)
     models, err = fetch_available_models(api_key)
     print("\r" + " " * 35 + "\r", end="")
 
     if err or not models:
-        print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
+        print(f"{RED}✗ Failed to fetch models: {err}{RESET}")
         return
 
     cfg = load_config()
@@ -286,10 +286,10 @@ def check_all_models():
             with urllib.request.urlopen(req, timeout=8) as res:
                 if res.status == 200:
                     dt = int((time.time() - t0) * 1000)
-                    print(f"{GREEN}✓ działa{RESET} {DIM}({dt}ms){RESET}")
+                    print(f"{GREEN}✓ works{RESET} {DIM}({dt}ms){RESET}")
                     tested[m] = {"ok": True, "latency_ms": dt}
                 else:
-                    print(f"{RED}✗ błąd ({res.status}){RESET}")
+                    print(f"{RED}✗ error ({res.status}){RESET}")
                     tested[m] = {"ok": False, "error": f"HTTP {res.status}"}
         except urllib.error.HTTPError as e:
             try:
@@ -308,13 +308,13 @@ def check_all_models():
 
     cfg["tested_models"] = tested
     save_config(cfg)
-    print(f"\n{GREEN}✓ Zakończono test modeli.{RESET}\n")
+    print(f"\n{GREEN}✓ Model check completed.{RESET}\n")
 
 def select_model_interactive(direct_choice=None):
-    """Wybiera aktywny model Groq."""
+    """Selects active Groq model."""
     api_key = get_api_key()
     if not api_key:
-        print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
+        print(f"{YELLOW}! Please log in first.{RESET}")
         auth_login()
         api_key = get_api_key()
         if not api_key:
@@ -323,12 +323,12 @@ def select_model_interactive(direct_choice=None):
     cfg = load_config()
     current_model = cfg.get("model", DEFAULT_MODEL)
 
-    print(f"\n{DIM}Pobieranie listy modeli z Groq API...{RESET}", end="", flush=True)
+    print(f"\n{DIM}Fetching models from Groq API...{RESET}", end="", flush=True)
     models, err = fetch_available_models(api_key)
     print("\r" + " " * 45 + "\r", end="")
 
     if err or not models:
-        print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
+        print(f"{RED}✗ Failed to fetch models: {err}{RESET}")
         return
 
     if direct_choice:
@@ -341,19 +341,19 @@ def select_model_interactive(direct_choice=None):
             if 0 <= idx < len(models):
                 chosen = models[idx]
             else:
-                print(f"{RED}✗ Nieprawidłowy numer modelu.{RESET}")
+                print(f"{RED}✗ Invalid model index.{RESET}")
                 return
         else:
             chosen = direct_choice
 
         cfg["model"] = chosen
         save_config(cfg)
-        print(f"{GREEN}✓ Ustawiono model na:{RESET} {CYAN}{chosen}{RESET}\n")
+        print(f"{GREEN}✓ Model set to:{RESET} {CYAN}{chosen}{RESET}\n")
         return
 
     tested = cfg.get("tested_models", {})
 
-    print(f"\n{BOLD}{MAGENTA}◆ Dostępne modele w Twoim koncie Groq:{RESET}\n")
+    print(f"\n{BOLD}{MAGENTA}◆ Available models in your Groq account:{RESET}\n")
     for i, m in enumerate(models, 1):
         is_active = (m == current_model)
         star = f"{GREEN}* {RESET}" if is_active else "  "
@@ -365,15 +365,15 @@ def select_model_interactive(direct_choice=None):
                 ms = tested[m].get("latency_ms", "-")
                 status_str = f" {GREEN}✓{RESET} {DIM}({ms}ms){RESET}"
             else:
-                status_str = f" {RED}✗{RESET} {DIM}(niedostępny){RESET}"
+                status_str = f" {RED}✗{RESET} {DIM}(unavailable){RESET}"
 
         print(f"{star}[{i:2d}] {m_name}{status_str}")
 
-    print(f"\n{DIM}[Wpisz numer 1-{len(models)}, wpisz 'check' aby przetestować, lub Ctrl+C aby anulować]{RESET}")
+    print(f"\n{DIM}[Enter number 1-{len(models)}, type 'check' to test, or Ctrl+C to cancel]{RESET}")
     try:
-        choice = input(f"{BOLD}Wybór [{current_model}]: {RESET}").strip()
+        choice = input(f"{BOLD}Select [{current_model}]: {RESET}").strip()
     except (KeyboardInterrupt, EOFError):
-        print("\nAnulowano.")
+        print("\nCancelled.")
         return
 
     if choice.lower() == "check":
@@ -386,18 +386,18 @@ def select_model_interactive(direct_choice=None):
             chosen = models[idx]
             cfg["model"] = chosen
             save_config(cfg)
-            print(f"\n{GREEN}✓ Zmieniono model na:{RESET} {CYAN}{chosen}{RESET}\n")
+            print(f"\n{GREEN}✓ Changed model to:{RESET} {CYAN}{chosen}{RESET}\n")
         else:
-            print(f"\n{RED}✗ Nieprawidłowy numer.{RESET}\n")
+            print(f"\n{RED}✗ Invalid number.{RESET}\n")
     elif choice:
         cfg["model"] = choice
         save_config(cfg)
-        print(f"\n{GREEN}✓ Zmieniono model na:{RESET} {CYAN}{choice}{RESET}\n")
+        print(f"\n{GREEN}✓ Changed model to:{RESET} {CYAN}{choice}{RESET}\n")
     else:
-        print(f"\n{DIM}Pozostawiono model: {current_model}{RESET}\n")
+        print(f"\n{DIM}Kept current model: {current_model}{RESET}\n")
 
 def set_verbosity_interactive(new_level=None):
-    """Konfiguruje domyślny tryb gadatliwości (zero, low, normal)."""
+    """Sets default verbosity mode (zero, low, normal)."""
     cfg = load_config()
     current = cfg.get("verbosity", DEFAULT_VERBOSITY)
 
@@ -410,22 +410,22 @@ def set_verbosity_interactive(new_level=None):
         elif lvl in ("2", "normal", "default", "standard"):
             lvl = "normal"
         else:
-            print(f"{RED}✗ Nieprawidłowy poziom verbosity: '{new_level}'{RESET}")
-            print(f"{DIM}Dozwolone: zero (tylko komenda), low (minimalny opis), normal (standardowy opis){RESET}\n")
+            print(f"{RED}✗ Invalid verbosity level: '{new_level}'{RESET}")
+            print(f"{DIM}Allowed: zero (command only), low (minimal description), normal (standard){RESET}\n")
             return
         cfg["verbosity"] = lvl
         save_config(cfg)
-        print(f"\n{GREEN}✓ Zmieniono domyślny tryb verbosity na: {BOLD}{lvl}{RESET}\n")
+        print(f"\n{GREEN}✓ Verbosity set to: {BOLD}{lvl}{RESET}\n")
         return
 
-    print(f"\n{BOLD}{MAGENTA}◆ Wybór domyślnego trybu szczegółowości (verbosity){RESET}\n")
-    print(f"  Aktualny tryb: {BOLD}{CYAN}{current}{RESET}\n")
-    print(f"  {BOLD}1{RESET}) {BOLD}zero{RESET}   - Tylko podpowiedź komendy (brak opisów, czysty wynik)")
-    print(f"  {BOLD}2{RESET}) {BOLD}low{RESET}    - Minimalny opis (1 krótkie zdanie co to jest + komenda)")
-    print(f"  {BOLD}3{RESET}) {BOLD}normal{RESET} - Standardowy poziom (1-2 zdania zwięzłego wyjaśnienia + komenda)\n")
+    print(f"\n{BOLD}{MAGENTA}◆ Select default verbosity level{RESET}\n")
+    print(f"  Current mode: {BOLD}{CYAN}{current}{RESET}\n")
+    print(f"  {BOLD}1{RESET}) {BOLD}zero{RESET}   - Command suggestion only (clean output, no extra text)")
+    print(f"  {BOLD}2{RESET}) {BOLD}low{RESET}    - Minimal description (1 short sentence + command)")
+    print(f"  {BOLD}3{RESET}) {BOLD}normal{RESET} - Standard level (concise explanation + command)\n")
 
     try:
-        ans = input(f"{CYAN}Wybierz tryb [1-3 / zero / low / normal] (domyślnie: {current}):{RESET} ").strip().lower()
+        ans = input(f"{CYAN}Select mode [1-3 / zero / low / normal] (default: {current}):{RESET} ").strip().lower()
     except (KeyboardInterrupt, EOFError):
         print()
         return
@@ -439,65 +439,58 @@ def set_verbosity_interactive(new_level=None):
     if chosen:
         cfg["verbosity"] = chosen
         save_config(cfg)
-        print(f"\n{GREEN}✓ Zapisano domyślny tryb verbosity: {BOLD}{chosen}{RESET}\n")
+        print(f"\n{GREEN}✓ Verbosity saved: {BOLD}{chosen}{RESET}\n")
     elif not ans:
-        print(f"\n{DIM}Pozostawiono tryb: {current}{RESET}\n")
+        print(f"\n{DIM}Kept mode: {current}{RESET}\n")
     else:
-        print(f"\n{RED}✗ Niepoprawny wybór.{RESET}\n")
+        print(f"\n{RED}✗ Invalid choice.{RESET}\n")
 
 # -----------------------------------------------------------------------------
-# Pamięć podręczna odpowiedzi (Groq Response Caching) i retencja
+# Response Cache & Retention
 # -----------------------------------------------------------------------------
 
 def parse_retention(val) -> int:
     """
-    Parsuje czas retencji wg formatu:
-      m - minutes (minuty)
-      h - hours (godziny)
-      D - days (dni)
-      M - months (miesiące)
-    Wspiera także pełne słowa (minut, godzin, dni, miesięcy) oraz wieloelementowe specyfikacje (np. 1D 2h).
-    Wartości '0', 'off', 'wyłącz' wyłączają pamięć podręczną (0 sekund).
+    Parses retention time string according to format:
+      m - minutes
+      h - hours
+      D - days
+      M - months
+    Also supports full words (minutes, hours, days, months) and combinations (e.g. 1D 2h).
+    Values '0', 'off', 'disable', 'none' disable caching (0 seconds).
     """
     if isinstance(val, (int, float)):
         return max(0, int(val))
     text = str(val).strip().replace(",", ".")
     text_lower = text.lower()
-    if text_lower in ("0", "off", "disable", "disabled", "brak", "none", "wylacz", "wyłącz", "false"):
+    if text_lower in ("0", "off", "disable", "disabled", "none", "false", "brak", "wylacz", "wyłącz"):
         return 0
 
-    text = re.sub(r"^(?:retencja|retention|czas|time)\s*(?:=|:|\s)?\s*", "", text, flags=re.IGNORECASE)
-    pattern = r"(\d+(?:\.\d+)?)\s*([a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+)?"
+    text = re.sub(r"^(?:retention|retencja|time|czas)\s*(?:=|:|\s)?\s*", "", text, flags=re.IGNORECASE)
+    pattern = r"(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?"
 
-    # Upewnijmy się, że cały ciąg jest poprawną specyfikacją czasu (brak pozostałości innego tekstu)
+    # Ensure full string matched with no leftovers
     leftover = re.sub(pattern, "", text).strip()
     if leftover:
-        raise ValueError(f"Nierozpoznany fragment czasu retencji: \"{leftover}\"")
+        raise ValueError(f"Unrecognized retention time format: \"{leftover}\"")
 
     matches = list(re.finditer(pattern, text))
     if not matches:
-        raise ValueError(f"Nieprawidłowy format czasu retencji: \"{val}\"")
+        raise ValueError(f"Invalid retention time format: \"{val}\"")
 
     WORD_MAP = {
-        # Sekundy
-        "sec": 1, "secs": 1, "second": 1, "seconds": 1,
-        "sek": 1, "sekunda": 1, "sekundy": 1, "sekund": 1, "sekundę": 1, "sekundach": 1,
-        # Minuty
-        "min": 60, "mins": 60, "minute": 60, "minutes": 60,
-        "minuta": 60, "minuty": 60, "minut": 60, "minutę": 60, "minutach": 60,
-        # Godziny
-        "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
-        "godz": 3600, "godzina": 3600, "godziny": 3600, "godzin": 3600, "godzinę": 3600, "godzinach": 3600,
-        # Dni
-        "day": 86400, "days": 86400,
-        "dzien": 86400, "dzień": 86400, "dni": 86400, "dnia": 86400, "dniach": 86400,
-        # Tygodnie
-        "wk": 7 * 86400, "week": 7 * 86400, "weeks": 7 * 86400,
-        "tydzien": 7 * 86400, "tydzień": 7 * 86400, "tygodnie": 7 * 86400, "tygodni": 7 * 86400, "tygodniach": 7 * 86400,
-        # Miesiące (30 dni)
-        "mo": 30 * 86400, "mon": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400,
-        "msc": 30 * 86400, "miesiac": 30 * 86400, "miesiąc": 30 * 86400, "miesiaca": 30 * 86400, "miesiąca": 30 * 86400,
-        "miesiace": 30 * 86400, "miesiące": 30 * 86400, "miesiecy": 30 * 86400, "miesięcy": 30 * 86400, "miesiacach": 30 * 86400, "miesiącach": 30 * 86400,
+        # Seconds
+        "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+        # Minutes
+        "min": 60, "mins": 60, "minute": 60, "minutes": 60, "minuta": 60, "minuty": 60, "minut": 60,
+        # Hours
+        "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600, "godz": 3600, "godzina": 3600, "godziny": 3600, "godzin": 3600,
+        # Days
+        "day": 86400, "days": 86400, "dzien": 86400, "dzień": 86400, "dni": 86400,
+        # Weeks
+        "w": 7 * 86400, "wk": 7 * 86400, "week": 7 * 86400, "weeks": 7 * 86400,
+        # Months (30 days)
+        "mo": 30 * 86400, "mon": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400, "miesiac": 30 * 86400, "miesiąc": 30 * 86400, "miesiace": 30 * 86400, "miesiące": 30 * 86400, "miesiecy": 30 * 86400, "miesięcy": 30 * 86400,
     }
 
     total_seconds = 0
@@ -507,11 +500,11 @@ def parse_retention(val) -> int:
         if not unit:
             if len(matches) == 1:
                 int_n = int(num) if num.is_integer() else num
-                raise ValueError(f"Brak jednostki czasu dla wartości {int_n} (użyj: m - minutes, h - hours, D - days, M - months)")
+                raise ValueError(f"Missing time unit for value {int_n} (use: m - minutes, h - hours, D - days, M - months)")
             else:
-                raise ValueError(f"Brak jednostki czasu dla wartości {num}")
+                raise ValueError(f"Missing time unit for value {num}")
 
-        # Jednostki jednoznakowe z rozróżnieniem wielkości liter:
+        # Case-sensitive single-letter units:
         # m - minutes; h - hours; D - days; M - months
         if unit == "m":
             multiplier = 60
@@ -519,7 +512,7 @@ def parse_retention(val) -> int:
             multiplier = 30 * 86400
         elif unit in ("D", "d"):
             multiplier = 86400
-        elif unit in ("h", "H", "g", "G"):
+        elif unit in ("h", "H"):
             multiplier = 3600
         elif unit in ("s", "S"):
             multiplier = 1
@@ -530,15 +523,15 @@ def parse_retention(val) -> int:
             if u_lower in WORD_MAP:
                 multiplier = WORD_MAP[u_lower]
             else:
-                raise ValueError(f"Nieznana jednostka czasu: \"{unit}\" (użyj: m - minutes, h - hours, D - days, M - months)")
+                raise ValueError(f"Unknown time unit: \"{unit}\" (use: m - minutes, h - hours, D - days, M - months)")
 
         total_seconds += int(num * multiplier)
     return total_seconds
 
 def format_retention(sec: int) -> str:
-    """Zwraca czytelny, pełny polski opis czasu retencji ze zwięzłym symbolem (m, h, D, M)."""
+    """Returns clear, full retention description with concise notation (m, h, D, M)."""
     if sec <= 0:
-        return "wyłączony (0s)"
+        return "disabled (0s)"
     parts = []
     mo = sec // (30 * 86400)
     sec_rem = sec % (30 * 86400)
@@ -550,37 +543,19 @@ def format_retention(sec: int) -> str:
     s = sec_rem % 60
 
     if mo > 0:
-        if mo == 1:
-            parts.append(f"{mo} miesiąc ({mo}M)")
-        elif 2 <= mo <= 4 or (mo > 20 and 2 <= mo % 10 <= 4):
-            parts.append(f"{mo} miesiące ({mo}M)")
-        else:
-            parts.append(f"{mo} miesięcy ({mo}M)")
+        parts.append(f"{mo} month{'s' if mo > 1 else ''} ({mo}M)")
     if d > 0:
-        if d == 1:
-            parts.append(f"{d} dzień ({d}D)")
-        else:
-            parts.append(f"{d} dni ({d}D)")
+        parts.append(f"{d} day{'s' if d > 1 else ''} ({d}D)")
     if h > 0:
-        if h == 1:
-            parts.append(f"{h} godzina ({h}h)")
-        elif 2 <= h <= 4 or (h > 20 and 2 <= h % 10 <= 4):
-            parts.append(f"{h} godziny ({h}h)")
-        else:
-            parts.append(f"{h} godzin ({h}h)")
+        parts.append(f"{h} hour{'s' if h > 1 else ''} ({h}h)")
     if m > 0:
-        if m == 1:
-            parts.append(f"{m} minuta ({m}m)")
-        elif 2 <= m <= 4 or (m > 20 and 2 <= m % 10 <= 4):
-            parts.append(f"{m} minuty ({m}m)")
-        else:
-            parts.append(f"{m} minut ({m}m)")
+        parts.append(f"{m} minute{'s' if m > 1 else ''} ({m}m)")
     if s > 0:
         parts.append(f"{s}s")
     return ", ".join(parts) if parts else "0s"
 
 def format_retention_short(sec: int) -> str:
-    """Zwraca krótki format czasu wg notacji: m - minutes, h - hours, D - days, M - months."""
+    """Returns short time format using: m - minutes, h - hours, D - days, M - months."""
     if sec < 60:
         return f"{sec}s"
     m = sec // 60
@@ -601,17 +576,17 @@ def format_retention_short(sec: int) -> str:
 
 def get_effective_retention(override=None):
     """
-    Zwraca aktywny czas retencji w sekundach wg priorytetów:
-    1. override (flaga --retention / --cache-retention)
-    2. zmienna środowiskowa HOW_CACHE_RETENTION
-    3. wartość z config.json
-    4. domyślnie 3 godziny (DEFAULT_CACHE_RETENTION)
+    Returns active retention in seconds according to priorities:
+    1. override (--retention / --cache-retention flag)
+    2. HOW_CACHE_RETENTION environment variable
+    3. value from config.json
+    4. default: 3 hours (DEFAULT_CACHE_RETENTION)
     """
     if override is not None:
         try:
             return parse_retention(override)
         except ValueError as e:
-            print(f"{YELLOW}! Nieprawidłowa flaga retencji ({e}), używam bieżącej konfiguracji.{RESET}")
+            print(f"{YELLOW}! Invalid retention flag ({e}), using current configuration.{RESET}")
 
     env_val = os.environ.get("HOW_CACHE_RETENTION", "").strip()
     if env_val:
@@ -636,7 +611,7 @@ def get_effective_retention(override=None):
     return DEFAULT_CACHE_RETENTION
 
 def get_db_connection():
-    """Otwiera połączenie z bazą SQLite cache z automatyczną inicjalizacją tabel."""
+    """Opens connection to SQLite cache database with auto table initialization."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     conn = sqlite3.connect(CACHE_DB_FILE, timeout=5.0)
     try:
@@ -660,8 +635,8 @@ def get_db_connection():
 
 def get_cached_response(query, model, verbosity, retention_seconds):
     """
-    Sprawdza, czy w pamięci podręcznej istnieje aktualna odpowiedź dla zapytania.
-    Zwraca (response_text, created_at) lub None.
+    Checks if a valid cached response exists for the query.
+    Returns (response_text, created_at) or None.
     """
     if retention_seconds <= 0:
         return None
@@ -672,7 +647,7 @@ def get_cached_response(query, model, verbosity, retention_seconds):
         now = time.time()
         conn = get_db_connection()
         with conn:
-            # Okresowe czyszczenie przedawnionych wpisów
+            # Periodic cleanup of expired entries
             conn.execute("DELETE FROM response_cache WHERE expires_at < ?", (now,))
             cur = conn.cursor()
             cur.execute(
@@ -682,7 +657,13 @@ def get_cached_response(query, model, verbosity, retention_seconds):
             row = cur.fetchone()
             if row:
                 resp, created_at, expires_at = row
-                if now < expires_at and (now - created_at) <= retention_seconds:
+                if now < expires_at:
+                    # Sliding expiration: refresh expiration window upon cache hit
+                    new_expires_at = now + retention_seconds
+                    conn.execute(
+                        "UPDATE response_cache SET expires_at = ? WHERE key = ?",
+                        (new_expires_at, cache_key)
+                    )
                     return resp, created_at
     except Exception:
         pass
@@ -695,7 +676,7 @@ def get_cached_response(query, model, verbosity, retention_seconds):
     return None
 
 def save_cached_response(query, model, verbosity, response_text, retention_seconds):
-    """Zapisuje odpowiedź do bazy cache z czasem wygaśnięcia."""
+    """Saves response to cache database with expiration timestamp."""
     if retention_seconds <= 0 or not response_text:
         return
     conn = None
@@ -720,10 +701,10 @@ def save_cached_response(query, model, verbosity, response_text, retention_secon
                 pass
 
 def cache_status():
-    """Wyświetla szczegółowy status pamięci podręcznej."""
+    """Displays detailed cache status."""
     retention_sec = get_effective_retention()
     ret_str = format_retention(retention_sec)
-    status_label = f"{GREEN}włączony{RESET}" if retention_sec > 0 else f"{YELLOW}wyłączony (0s){RESET}"
+    status_label = f"{GREEN}enabled{RESET}" if retention_sec > 0 else f"{YELLOW}disabled (0s){RESET}"
 
     total_entries = 0
     active_entries = 0
@@ -752,20 +733,20 @@ def cache_status():
                 except Exception:
                     pass
 
-    print(f"\n{BOLD}{MAGENTA}◆ Pamięć podręczna odpowiedzi (Groq Response Cache){RESET}\n")
-    print(f"  Status:       {status_label}")
-    print(f"  Retencja:     {BOLD}{CYAN}{ret_str}{RESET} {DIM}({retention_sec} s){RESET}")
-    print(f"  Wpisy:        {BOLD}{active_entries}{RESET} aktywnych {DIM}(łącznie: {total_entries}, wygasłych: {expired_entries}){RESET}")
-    print(f"  Rozmiar bazy: {DIM}{db_size_kb:.1f} KB{RESET}")
-    print(f"  Lokalizacja:  {DIM}{CACHE_DB_FILE}{RESET}\n")
-    print(f"{BOLD}Zarządzanie pamięcią podręczną:{RESET}")
-    print(f"  {CYAN}how cache retention <czas>{RESET}   Zmień czas retencji (np. 30m, 3h, 7D, 1M)")
-    print(f"  {CYAN}how cache clear{RESET}              Wyczyść całą pamięć podręczną")
-    print(f"  {CYAN}how cache off / on{RESET}           Wyłącz lub włącz pamięć podręczną")
-    print(f"  {CYAN}how --no-cache <pytanie>{RESET}     Wyślij zapytanie pomijając cache\n")
+    print(f"\n{BOLD}{MAGENTA}◆ Groq Response Cache Status{RESET}\n")
+    print(f"  Status:    {status_label}")
+    print(f"  Retention: {BOLD}{CYAN}{ret_str}{RESET} {DIM}({retention_sec}s){RESET}")
+    print(f"  Entries:   {BOLD}{active_entries}{RESET} active {DIM}(total: {total_entries}, expired: {expired_entries}){RESET}")
+    print(f"  DB Size:   {DIM}{db_size_kb:.1f} KB{RESET}")
+    print(f"  Database:  {DIM}{CACHE_DB_FILE}{RESET}\n")
+    print(f"{BOLD}Cache commands:{RESET}")
+    print(f"  {CYAN}how cache retention <time>{RESET}  Change retention (e.g. 30m, 3h, 7D, 1M)")
+    print(f"  {CYAN}how cache clear{RESET}             Clear entire cache")
+    print(f"  {CYAN}how cache off / on{RESET}          Disable or enable cache")
+    print(f"  {CYAN}how --no-cache <query>{RESET}      Query bypassing cache\n")
 
 def cache_clear():
-    """Czyści bazę danych pamięci podręcznej."""
+    """Clears cache database entries."""
     count = 0
     if os.path.exists(CACHE_DB_FILE):
         conn = None
@@ -782,7 +763,7 @@ def cache_clear():
             except Exception:
                 pass
         except Exception as e:
-            print(f"{RED}✗ Błąd podczas czyszczenia cache: {e}{RESET}\n")
+            print(f"{RED}✗ Error clearing cache: {e}{RESET}\n")
             return
         finally:
             if conn:
@@ -790,30 +771,30 @@ def cache_clear():
                     conn.close()
                 except Exception:
                     pass
-    print(f"\n{GREEN}✓ Pamięć podręczna wyczyszczona.{RESET} {DIM}Usunięto {count} wpisów.{RESET}\n")
+    print(f"\n{GREEN}✓ Cache cleared.{RESET} {DIM}Removed {count} entries.{RESET}\n")
 
 def cache_set_retention(val=None):
-    """Ustawia nowy czas retencji pamięci podręcznej."""
+    """Sets new cache retention time."""
     if not val:
         current_sec = get_effective_retention()
         current_str = format_retention(current_sec)
-        print(f"\n{BOLD}{MAGENTA}◆ Ustawienie czasu retencji pamięci podręcznej{RESET}\n")
-        print(f"  Aktualna retencja: {BOLD}{CYAN}{current_str}{RESET}\n")
-        print(f"  {BOLD}Format retencji:{RESET} {CYAN}m{RESET} - minutes, {CYAN}h{RESET} - hours, {CYAN}D{RESET} - days, {CYAN}M{RESET} - months")
-        print("  Przykłady:")
-        print("    30m              -> 30 minut")
-        print("    3h               -> 3 godziny (domyślna)")
-        print("    7D               -> 7 dni")
-        print("    1M               -> 1 miesiąc (30 dni)")
-        print("    3M               -> 3 miesiące (90 dni)")
-        print("    0 / off / wyłącz -> wyłączenie cache\n")
+        print(f"\n{BOLD}{MAGENTA}◆ Set Cache Retention Time{RESET}\n")
+        print(f"  Current retention: {BOLD}{CYAN}{current_str}{RESET}\n")
+        print(f"  {BOLD}Retention format:{RESET} {CYAN}m{RESET} - minutes, {CYAN}h{RESET} - hours, {CYAN}D{RESET} - days, {CYAN}M{RESET} - months")
+        print("  Examples:")
+        print("    30m              -> 30 minutes")
+        print("    3h               -> 3 hours (default)")
+        print("    7D               -> 7 days")
+        print("    1M               -> 1 month (30 days)")
+        print("    3M               -> 3 months (90 days)")
+        print("    0 / off          -> disable cache\n")
         try:
-            val = input(f"{BOLD}Podaj nowy czas retencji [{current_str}]: {RESET}").strip()
+            val = input(f"{BOLD}Enter new retention [{current_str}]: {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Anulowano.{RESET}\n")
+            print(f"\n{YELLOW}Cancelled.{RESET}\n")
             return
         if not val:
-            print(f"\n{DIM}Pozostawiono retencję: {current_str}{RESET}\n")
+            print(f"\n{DIM}Kept retention: {current_str}{RESET}\n")
             return
 
     try:
@@ -829,9 +810,9 @@ def cache_set_retention(val=None):
 
     formatted = format_retention(sec)
     if sec == 0:
-        print(f"\n{YELLOW}✓ Pamięć podręczna została wyłączona (retencja: 0s).{RESET}\n")
+        print(f"\n{YELLOW}✓ Response cache has been disabled (retention: 0s).{RESET}\n")
     else:
-        print(f"\n{GREEN}✓ Zmieniono czas retencji cache na:{RESET} {BOLD}{CYAN}{formatted}{RESET} {DIM}({sec} s){RESET}\n")
+        print(f"\n{GREEN}✓ Cache retention updated to:{RESET} {BOLD}{CYAN}{formatted}{RESET} {DIM}({sec}s){RESET}\n")
 
 # -----------------------------------------------------------------------------
 # Lokalny RAG dla manuali systemowych i Omarchy (tldr, man, --help)
@@ -990,19 +971,19 @@ def format_query(raw_query):
         return f"In Omarchy console: {q}"
 
 def log_command_proposal(query, command, executed=False):
-    """Zapisuje propozycję komendy do lokalnego logu ~/.config/how/commands.log"""
+    """Logs command proposal to ~/.config/how/commands.log"""
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(COMMANDS_LOG, "a", encoding="utf-8") as f:
-            status = "WYKONANO" if executed else "ZAPROPONOWANO"
+            status = "EXECUTED" if executed else "PROPOSED"
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
             q_clean = query.strip() if query else "-"
-            f.write(f"[{ts}] [{status}] Pytanie: \"{q_clean}\" | Komenda: {command.strip()}\n")
+            f.write(f"[{ts}] [{status}] Query: \"{q_clean}\" | Command: {command.strip()}\n")
     except Exception:
         pass
 
 def copy_to_clipboard(text):
-    """Kopiuje tekst do schowka Wayland (wl-copy) lub X11 (xclip), jeśli dostępne."""
+    """Copies text to Wayland (wl-copy) or X11 (xclip) clipboard if available."""
     import subprocess
     for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard"]):
         try:
@@ -1015,9 +996,9 @@ def copy_to_clipboard(text):
     return False
 
 def show_command_history(limit=15, filter_term=None):
-    """Wyświetla ostatnie proponowane komendy."""
+    """Displays recently proposed commands."""
     if not os.path.exists(COMMANDS_LOG):
-        print(f"\n{DIM}Brak zarejestrowanych komend w historii.{RESET}\n")
+        print(f"\n{DIM}No command history recorded.{RESET}\n")
         return
 
     try:
@@ -1028,22 +1009,22 @@ def show_command_history(limit=15, filter_term=None):
             ft = filter_term.lower()
             lines = [l for l in lines if ft in l.lower()]
 
-        print(f"\n{BOLD}{MAGENTA}◆ Historia proponowanych komend{RESET}\n")
+        print(f"\n{BOLD}{MAGENTA}◆ Command History{RESET}\n")
         if not lines:
-            print(f"  {DIM}Brak komend pasujących do filtru.{RESET}\n")
+            print(f"  {DIM}No commands matching filter.{RESET}\n")
             return
         recent = lines[-limit:]
         for line in recent:
-            if "[WYKONANO]" in line:
+            if "[EXECUTED]" in line or "[WYKONANO]" in line:
                 print(f"  {GREEN}✓{RESET} {DIM}{line}{RESET}")
             else:
                 print(f"  {CYAN}➜{RESET} {DIM}{line}{RESET}")
-        print(f"\n{DIM}Wskazówka: Komendy są zapisywane w ~/.bash_history oraz kopiowane do schowka systemowego.{RESET}\n")
+        print(f"\n{DIM}Tip: Commands are saved to ~/.bash_history and copied to system clipboard.{RESET}\n")
     except Exception as e:
-        print(f"{RED}Błąd odczytu historii: {e}{RESET}\n")
+        print(f"{RED}Error reading history: {e}{RESET}\n")
 
 def save_to_bash_history(cmd):
-    """Zapisuje polecenie do ~/.bash_history użytkownika."""
+    """Appends command to user's ~/.bash_history."""
     try:
         hist_path = os.path.expanduser("~/.bash_history")
         with open(hist_path, "a", encoding="utf-8") as f:
@@ -1052,9 +1033,9 @@ def save_to_bash_history(cmd):
         pass
 
 def extract_executable_command(text):
-    """Wyodrębnia pierwszą komendę z bloku ```bash ... ``` lub ```sh ... ```."""
+    """Extracts first command from ```bash ... ``` or ```sh ... ``` code block."""
     clean_text = text.strip().lower().rstrip(".!?:")
-    if clean_text in ("nie wiem", "nie wiem", "i don't know", "idk"):
+    if clean_text in ("i don't know", "i dont know", "nie wiem", "idk"):
         return None
 
     m = re.search(r"```(?:bash|sh)?\s*\n(.*?)\n```", text, re.DOTALL)
@@ -1078,9 +1059,8 @@ def extract_executable_command(text):
 
 def display_suggested_command(command, query="", is_cached=False):
     """
-    Wypisuje sugerowaną komendę bezpośrednio w konsoli-rodzicu,
-    kopiuje ją do schowka i rejestruje w logu oraz historii basha.
-    how NIGDY nie uruchamia sam żadnej komendy ani konsoli potomnej!
+    Prints suggested command directly to console,
+    copies it to clipboard and logs to commands.log and bash history.
     """
     cmd = command.strip()
     if not cmd:
@@ -1089,10 +1069,10 @@ def display_suggested_command(command, query="", is_cached=False):
     save_to_bash_history(cmd)
     log_command_proposal(query, cmd, executed=False)
     copied = copy_to_clipboard(cmd)
-    clip_hint = f" {GREEN}[skopiowano do schowka: wklej Ctrl+Shift+V]{RESET}" if copied else ""
+    clip_hint = f" {GREEN}[copied to clipboard: paste Ctrl+Shift+V]{RESET}" if copied else ""
     cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
 
-    print(f"{BOLD}{CYAN}Sugerowana komenda:{RESET}{cache_tag}{clip_hint}")
+    print(f"{BOLD}{CYAN}Suggested command:{RESET}{cache_tag}{clip_hint}")
     print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
 # -----------------------------------------------------------------------------
@@ -1122,7 +1102,7 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
         if cached:
             cached_text, cached_at = cached
             age_sec = max(0, int(time.time() - cached_at))
-            age_str = format_retention_short(age_sec) + " temu" if age_sec > 0 else "przed chwilą"
+            age_str = format_retention_short(age_sec) + " ago" if age_sec > 0 else "just now"
 
             if verbosity != "zero":
                 v_info = f", {verbosity}" if verbosity != "normal" else ""
@@ -1135,7 +1115,7 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
                     save_to_bash_history(cmd)
                     log_command_proposal(raw_query, cmd, executed=False)
                     copied = copy_to_clipboard(cmd)
-                    clip_hint = f" {GREEN}[skopiowano: Ctrl+Shift+V]{RESET}" if copied else ""
+                    clip_hint = f" {GREEN}[copied: Ctrl+Shift+V]{RESET}" if copied else ""
                     print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint} {YELLOW}[cache]{RESET}\n")
                 else:
                     display_suggested_command(cmd, query=raw_query, is_cached=True)
@@ -1144,12 +1124,12 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
                     print(f"{cached_text.strip()} {YELLOW}[cache]{RESET}\n")
             return
 
-    # Jeśli brak w cache, wymagamy klucza Groq API
+    # If not in cache, require Groq API key
     import urllib.request
     import urllib.error
     api_key = get_api_key()
     if not api_key:
-        print(f"{YELLOW}! Wymagany klucz Groq API.{RESET}")
+        print(f"{YELLOW}! Groq API key required.{RESET}")
         auth_login()
         api_key = get_api_key()
         if not api_key:
@@ -1211,7 +1191,7 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
 
         full_text = "".join(full_response)
 
-        # Zapis do pamięci podręcznej jeśli zapytanie powiodło się
+        # Save to response cache if query succeeded
         if not bypass_cache and full_text.strip():
             save_cached_response(raw_query, model, verbosity, full_text, retention_sec)
 
@@ -1221,7 +1201,7 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
                 save_to_bash_history(cmd)
                 log_command_proposal(raw_query, cmd, executed=False)
                 copied = copy_to_clipboard(cmd)
-                clip_hint = f" {GREEN}[skopiowano: Ctrl+Shift+V]{RESET}" if copied else ""
+                clip_hint = f" {GREEN}[copied: Ctrl+Shift+V]{RESET}" if copied else ""
                 print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint}\n")
             else:
                 display_suggested_command(cmd, query=raw_query)
@@ -1238,30 +1218,166 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
             msg = err_msg
 
         if e.code == 429:
-            print(f"\n{YELLOW}⚡ Limit Groq API osiągnięty (429 Rate Limit). Spróbuj ponownie za chwilę.{RESET}\n")
+            print(f"\n{YELLOW}⚡ Groq API rate limit reached (429 Rate Limit). Try again in a moment.{RESET}\n")
         elif e.code in (404, 503):
             fallback_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
             untried = [m for m in fallback_models if m != model]
             if untried:
                 next_model = untried[0]
-                print(f"\n{YELLOW}! Model '{model}' niedostępny ({e.code}).{RESET}")
-                print(f"{CYAN}➜ Automatyczny fallback na model: '{next_model}'...{RESET}\n")
+                print(f"\n{YELLOW}! Model '{model}' unavailable ({e.code}).{RESET}")
+                print(f"{CYAN}➜ Automatic fallback to model: '{next_model}'...{RESET}\n")
                 cfg["model"] = next_model
                 save_config(cfg)
                 ask_groq(raw_query, copy_only=copy_only, verbosity=verbosity, no_cache=no_cache, custom_retention=custom_retention)
                 return
             else:
-                print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}\n")
+                print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
         else:
-            print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}\n")
+            print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
     except KeyboardInterrupt:
-        print(f"\n{YELLOW}Przerwano przez użytkownika.{RESET}\n")
+        print(f"\n{YELLOW}Interrupted by user.{RESET}\n")
     except Exception as e:
-        print(f"\n{RED}✗ Błąd połączenia: {e}{RESET}\n")
+        print(f"\n{RED}✗ Connection error: {e}{RESET}\n")
 
 # -----------------------------------------------------------------------------
 # Pomoc i punkt wejścia CLI
 # -----------------------------------------------------------------------------
+
+def check_feedback_safety(message: str) -> tuple[bool, str]:
+    """
+    Validates feedback content against DoS (payload size) and Prompt Injection / Malicious patterns.
+    Returns (is_safe, reason).
+    """
+    if len(message) > 1000:
+        return False, "Feedback message exceeds maximum allowed length (1000 chars)."
+
+    # Prompt injection & jailbreak signature detection
+    injection_patterns = [
+        r"ignore\s+(previous|all)\s+instructions",
+        r"disregard\s+(previous|all)\s+instructions",
+        r"system\s*:\s*",
+        r"assistant\s*:\s*",
+        r"you\s+are\s+now\s+a",
+        r"jailbreak",
+        r"dan\s+mode",
+        r"<\|im_start\|>",
+        r"<\|im_end\|>",
+        r"\[INST\]",
+        r"\[/INST\]",
+        r"===\s*system",
+        r"base64\s*decode",
+        r"eval\s*\(",
+        r"exec\s*\(",
+        r"DROP\s+TABLE",
+        r"--\s*$",
+        r"union\s+select",
+        r"<script",
+        r"javascript:",
+    ]
+    for pat in injection_patterns:
+        if re.search(pat, message, re.IGNORECASE):
+            return False, "Potentially unsafe pattern or prompt-injection attempt detected."
+
+    return True, ""
+
+def send_terminal_feedback(message=""):
+    """
+    Submits ultra-lightweight feedback directly from the terminal.
+    Includes rate-limiting (anti-DoS) and prompt-injection safety guardrails.
+    If rejected, politely directs user to contact @mtulds on X.
+    """
+    if not message:
+        print(f"\n{BOLD}{MAGENTA}◆ Quick Terminal Feedback{RESET}")
+        print(f"{DIM}Share a quick thought, broken command, or suggestion directly from terminal.{RESET}\n")
+        try:
+            message = input(f"{CYAN}Feedback:{RESET} ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if not message:
+            print(f"{DIM}Feedback cancelled.{RESET}")
+            return
+
+    # 1. Rate-limiting guardrail (local anti-flood: max 1 submission per 10 seconds)
+    cfg = load_config()
+    last_sent = cfg.get("last_feedback_time", 0)
+    now = time.time()
+    if now - last_sent < 10:
+        print(f"\n{YELLOW}! Please wait {int(10 - (now - last_sent))}s before sending another feedback.{RESET}\n")
+        return
+
+    # 2. Content & Prompt-Injection Safety Guardrail
+    is_safe, reason = check_feedback_safety(message)
+    if not is_safe:
+        print(f"\n{YELLOW}Sorry, this feedback could not be accepted automatically ({reason}).{RESET}")
+        print(f"{BOLD}Please share your feedback or problem directly via X (Twitter) with {CYAN}@mtulds{RESET}.\n")
+        return
+
+    # Update rate-limiting timestamp
+    cfg["last_feedback_time"] = now
+    save_config(cfg)
+
+    # Check for configured webhook (e.g. Google Apps Script / Worker / Form URL)
+    webhook_url = os.environ.get("HOW_FEEDBACK_WEBHOOK") or cfg.get("feedback_webhook")
+
+    if webhook_url:
+        import urllib.request
+        import urllib.error
+        payload = json.dumps({
+            "feedback": message,
+            "timestamp": now,
+            "version": "0.1.0",
+            "os": sys.platform
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            headers={**COMMON_HEADERS, "Content-Type": "application/json"}
+        )
+        print(f"{DIM}Sending feedback...{RESET} ", end="", flush=True)
+        try:
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                if resp.status in (200, 201, 204):
+                    print(f"{GREEN}✓ Sent! Thank you.{RESET}\n")
+                    return
+        except Exception:
+            print(f"{YELLOW}(webhook unavailable){RESET}")
+
+    # GitHub CLI fallback (if user has `gh` installed and authenticated, zero browser hop!)
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["gh", "issue", "create", "--repo", "mdsyseng/how", "--title", f"Quick Feedback: {message[:60]}", "--body", message, "--label", "feedback"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5
+        )
+        if proc.returncode == 0:
+            issue_url = proc.stdout.strip()
+            print(f"{GREEN}✓ Issue created directly from terminal:{RESET} {issue_url}\n")
+            return
+    except Exception:
+        pass
+
+    # Browser fallback
+    open_feedback_url(message)
+
+def open_feedback_url(query=""):
+    """Opens GitHub issues page to effortlessly report a bug or suggest an improvement."""
+    import urllib.parse
+    base_url = "https://github.com/mdsyseng/how/issues/new"
+    if query:
+        title = f"Feedback: {query[:50]}"
+        body = f"### Query / Context\n`how {query}`\n\n### What happened / What could be better?\n"
+        params = urllib.parse.urlencode({"title": title, "body": body})
+        url = f"{base_url}?{params}"
+    else:
+        url = base_url
+    print(f"\n{BOLD}{MAGENTA}◆ Opening feedback in browser...{RESET}")
+    print(f"{DIM}{url}{RESET}\n")
+    if not open_url_in_browser(url):
+        print(f"{YELLOW}! Could not open browser automatically. Visit the link above to submit feedback.{RESET}\n")
 
 def print_help():
     print(f"""Usage:
@@ -1269,17 +1385,19 @@ def print_help():
   {CYAN}how{RESET} <command> [args...]
 
 Commands:
-  {CYAN}auth{RESET} [login|status|logout]   Zarządzanie kluczem Groq API
-  {CYAN}model{RESET} [check]                Wybór i test modeli
-  {CYAN}cache{RESET} [retention|clear]      Pamięć podręczna i retencja (m, h, D, M)
-  {CYAN}verbosity{RESET} [zero|low|normal]  Domyślny poziom szczegółowości
-  {CYAN}history{RESET} [filtr]              Historia proponowanych komend
+  {CYAN}auth{RESET} [login|status|logout]   Manage Groq API key
+  {CYAN}model{RESET} [check]                Select and test models
+  {CYAN}cache{RESET} [retention|clear]      Response cache and retention (m, h, D, M)
+  {CYAN}verbosity{RESET} [zero|low|normal]  Default output verbosity
+  {CYAN}history{RESET} [filter]              Recent command suggestions
+  {CYAN}feedback{RESET} [text...]            Send quick feedback directly from terminal
 
 Options:
-  {GREEN}-0, --zero{RESET}                   Tylko komenda (brak opisów)
-  {GREEN}--low{RESET}                        Minimalny 1-zdaniowy opis
-  {GREEN}--no-cache{RESET}                   Pomiń pamięć podręczną
-  {GREEN}--retention <czas>{RESET}           Tymczasowy czas retencji (np. 30m, 3h, 7D, 1M)
+  {GREEN}-0, --zero{RESET}                   Command only (no explanation)
+  {GREEN}--low{RESET}                        Minimal 1-sentence explanation
+  {GREEN}--no-cache{RESET}                   Bypass response cache
+  {GREEN}--retention <time>{RESET}           Temporary cache retention (e.g. 30m, 3h, 7D, 1M)
+  {GREEN}--feedback, --bug{RESET}            Quick feedback link for the current query
 """)
 
 def main():
@@ -1299,17 +1417,21 @@ def main():
         set_verbosity_interactive(target_v)
         sys.exit(0)
 
-    # Parsowanie flag (verbosity, clip, cache)
+    # Parsowanie flag (verbosity, clip, cache, feedback)
     verbosity = None
     copy_only = False
     no_cache = False
     custom_retention = None
+    feedback_mode = False
     args = []
     i = 0
     while i < len(raw_args):
         a = raw_args[i]
         a_lower = a.lower()
-        if a_lower in ("-c", "--clip", "--copy"):
+        if a_lower in ("--feedback", "--bug", "--issue", "--report"):
+            feedback_mode = True
+            i += 1
+        elif a_lower in ("-c", "--clip", "--copy"):
             copy_only = True
             i += 1
         elif a_lower in ("-0", "--zero", "-q", "--quiet"):
@@ -1326,7 +1448,7 @@ def main():
                 verbosity = raw_args[i + 1].lower()
                 i += 2
             else:
-                print(f"{RED}✗ Podaj poziom verbosity po fladze {a} (zero, low, normal).{RESET}")
+                print(f"{RED}✗ Provide verbosity level after {a} (zero, low, normal).{RESET}")
                 sys.exit(1)
         elif a_lower.startswith("--verbosity="):
             verbosity = a.split("=", 1)[1].lower()
@@ -1342,7 +1464,7 @@ def main():
                 custom_retention = raw_args[i + 1]
                 i += 2
             else:
-                print(f"{RED}✗ Podaj czas retencji po fladze {a} (np. 30m, 3h, 7d, 1mo).{RESET}")
+                print(f"{RED}✗ Provide retention time after {a} (e.g. 30m, 3h, 7D, 1M).{RESET}")
                 sys.exit(1)
         elif a_lower.startswith("--retention="):
             custom_retention = a.split("=", 1)[1]
@@ -1359,6 +1481,16 @@ def main():
         sys.exit(0)
 
     first = args[0].lower()
+
+    # Podkomenda feedback: how feedback [opcjonalny opis/zapytanie]
+    if first in ("feedback", "bug", "report", "issue"):
+        msg = " ".join(args[1:]) if len(args) > 1 else ""
+        send_terminal_feedback(msg)
+        sys.exit(0)
+
+    if feedback_mode:
+        send_terminal_feedback(" ".join(args))
+        sys.exit(0)
 
     # Podkomendy 'cache'
     if first == "cache":

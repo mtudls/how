@@ -363,6 +363,38 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 > What is init for?
 > Remove it!
 
+---
+
+## Prompt 26: Complete English localization and Omarchy plugin release research
+
+### Wersja oryginalna (PL):
+> ok, teraz czyścimy. 
+> 1. zmień wszystkie (widoczne dla użytkownika) rzeczy (help, nie wiem, etc) na angielskie. 
+> 2. przygotowujemy się do opublikowania pluignu. zanim to zrobimy, zrób reaserch (albo zleć innemu agentowi) jak wyglądaja najpopularniejsze/najlepiej przyjęte opisy/readme/meta-dane pluginów Omarchy. Wyciągnij wnioski i zrób plan przygotowania release'a na bardzo dobrym poziomie (jednocześnie kierując sie minimalizmem).
+
+### English version below
+> OK, now we clean up.
+> 1. Change all user-visible things (help, "I don't know", etc.) to English.
+> 2. We are preparing to publish the plugin. Before we do, research (or delegate to another agent) what the most popular/well-received Omarchy plugin descriptions/READMEs/metadata look like. Draw conclusions and make a top-quality release preparation plan (while following minimalism).
+
+---
+
+## Prompt 27: Sliding cache expiration, GitHub Actions & parallel release preparation
+
+### Wersja oryginalna (PL):
+> zadania:
+> 1. Zmiana zachowania polegająca na tym, że użyty cache odświeża się, to znaczy jego czas wygasania zaczyna się liczyć od nowa dla danej użytej komendy.
+> 2. Dodaj do folderu .github zalecane przeze mnie akcje na GitHubie, między innymi takie jak skanowanie podatności, skanowanie nowszych wersji przy pomocy Renovate, skanowanie sekretów oraz takie skany jakości i bezpieczeństwa, które są zalecane przez Omarchy. Dodaj także ci do wersjonowania, tagowania i wydawania. Na razie nie triggeruj wydwania.
+> 3. Wykonaj plan przygotowania minimalistycznego wydania, ten który napisałeś powyżej, w dwóch równoległych procesach. Jeden proces to struktura repozytorium, druga jednolity instalator.
+
+### English version below
+> Tasks:
+> 1. Change behavior so that used cache is refreshed, meaning its expiration window starts anew for that used command upon hit.
+> 2. Add recommended GitHub Actions to .github folder, including vulnerability scanning, dependency updates via Renovate, secret scanning, and quality/security scans recommended by Omarchy. Also add CI for versioning, tagging, and releases. Do not trigger release yet.
+> 3. Execute the minimalist release preparation plan described above in two parallel processes: one process for repository structure, second for unified installer.
+
+
+
 
 
 
