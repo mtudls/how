@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# omarchy:summary=Ask Groq for fast Linux and Omarchy how-to commands
+# omarchy:group=agent
+# omarchy:args=[-0|--low] [to] <query...> | model | auth | history | verbosity
+# omarchy:examples=how to ping google | how -0 to ping google | how verbosity low
 """
 how - Ultra-fast AI CLI assistant powered by Groq for Omarchy & Linux developers.
 Zero external dependencies (uses standard library).
@@ -7,18 +11,12 @@ Zero external dependencies (uses standard library).
 import sys
 import os
 import json
-import getpass
-import urllib.request
-import urllib.error
-import subprocess
-import webbrowser
 import re
-import readline
 import time
 
-CONFIG_DIR = os.path.expanduser("~/.config/how")
+CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-KEYS_FILE = os.path.join(CONFIG_DIR, "keys.json")
+COMMANDS_LOG = os.path.join(CONFIG_DIR, "commands.log")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_KEYS_URL = "https://console.groq.com/keys"
@@ -26,40 +24,73 @@ GROQ_KEYS_URL = "https://console.groq.com/keys"
 # Rekomendowany domyślny model
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
+# Domyślny poziom gadatliwości: 'normal' (dostępne: 'zero', 'low', 'normal')
+DEFAULT_VERBOSITY = "normal"
+
 # Nagłówki HTTP (Cloudflare w Groq wymaga prawidłowego User-Agent)
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
     "Accept": "application/json"
 }
 
-# Kolory ANSI
-RESET = "\033[0m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-MAGENTA = "\033[35m"
+# Kolory ANSI (poszanowanie NO_COLOR, braku TTY oraz TERM=dumb)
+USE_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+RESET = "\033[0m" if USE_COLOR else ""
+BOLD = "\033[1m" if USE_COLOR else ""
+DIM = "\033[2m" if USE_COLOR else ""
+CYAN = "\033[36m" if USE_COLOR else ""
+GREEN = "\033[32m" if USE_COLOR else ""
+YELLOW = "\033[33m" if USE_COLOR else ""
+RED = "\033[31m" if USE_COLOR else ""
+MAGENTA = "\033[35m" if USE_COLOR else ""
 
-SYSTEM_PROMPT = """You are an ultra-fast, direct CLI 'how-to' assistant for Omarchy (an opinionated developer Linux distribution built on Arch Linux and Hyprland by DHH/Omacom).
+def get_system_prompt(verbosity="normal"):
+    """Zwraca dedykowany prompt systemowy w zależności od trybu verbosity (zero, low, normal)."""
+    base = """You are an ultra-fast, direct CLI 'how-to' assistant for Omarchy (an opinionated developer Linux distribution built on Arch Linux and Hyprland by DHH/Omacom).
+Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl, and standard modern developer tools (e.g. GitHub CLI 'gh auth switch' to switch accounts without logging out).
+Answer in the same language as the question (if asked in Polish, answer in Polish; if asked in English, answer in English).
 
-Response Rules:
+CRITICAL RULE ON UNCERTAINTY:
+If you are not confident or not sure about the answer, command, or how to accomplish the task, do NOT invent or guess. You MUST answer strictly with: "nie wiem" (or "nie wiem" if asked in Polish, "I don't know" if in English)."""
+
+    if verbosity == "zero":
+        return base + """
+
+Response Rules (STRICT ZERO VERBOSITY):
+1. Provide ONLY the exact executable bash/terminal command inside a single ```bash code block.
+2. Absolutely NO explanatory sentences, comments, headers, or concluding remarks. Only the code block.
+3. If the user's question is purely conceptual or not an actionable command, answer in 1 very short direct sentence without extra text.
+4. If not sure: output only "nie wiem"."""
+
+    elif verbosity == "low":
+        return base + """
+
+Response Rules (LOW VERBOSITY):
+1. Provide the exact executable bash/terminal command FIRST in a ```bash code block if the question is an actionable task.
+2. Provide a single ultra-short sentence (maximum 10 words) right after the code block stating what it does.
+3. If the user's question is purely conceptual, answer in 1 concise sentence.
+4. If not sure: answer "nie wiem"."""
+
+    else:  # normal
+        return base + """
+
+Response Rules (NORMAL VERBOSITY):
 1. Provide the exact executable bash/terminal command(s) FIRST in a ```bash code block if the question is an actionable task.
 2. Provide a 1-2 sentence concise explanation right after the code block.
 3. If the user's question is purely conceptual, explanatory, or general (not an actionable command request), do not output a bash code block; answer directly and concisely.
 4. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
-5. Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl, and standard modern developer tools (e.g. GitHub CLI 'gh auth switch' to switch accounts without logging out).
-6. Answer in the same language as the question (if asked in Polish, answer in Polish; if asked in English, answer in English)."""
+5. If not sure: answer "nie wiem"."""
 
 def open_url_in_browser(url):
     """Automatycznie otwiera przeglądarkę użytkownika w tle."""
+    import subprocess
     try:
         subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except Exception:
         pass
     try:
+        import webbrowser
         webbrowser.open(url)
         return True
     except Exception:
@@ -75,13 +106,29 @@ def load_config():
     return {}
 
 def save_config(data):
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-    os.chmod(CONFIG_FILE, 0o600)
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"{YELLOW}! Nie można zapisać konfiguracji do {CONFIG_FILE}: {e}{RESET}")
+
+def get_api_key():
+    """Zwraca klucz API ze zmiennej środowiskowej GROQ_API_KEY lub z config.json."""
+    env_k = os.environ.get("GROQ_API_KEY", "").strip()
+    if env_k:
+        return env_k
+    cfg = load_config()
+    return cfg.get("api_key", "").strip() or None
 
 def fetch_available_models(api_key):
     """Pobiera listę aktywnych modeli czatowych bezpośrednio z API Groq."""
+    import urllib.request
+    import urllib.error
     headers = {
         **COMMON_HEADERS,
         "Authorization": f"Bearer {api_key}"
@@ -110,296 +157,94 @@ def fetch_available_models(api_key):
         return [], str(e)
     return [], "Nieznany błąd"
 
-def validate_key(api_key):
-    headers = {
-        **COMMON_HEADERS,
-        "Authorization": f"Bearer {api_key}"
-    }
-    req = urllib.request.Request(GROQ_MODELS_URL, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            return res.status == 200, "OK"
-    except urllib.error.HTTPError as e:
-        try:
-            body = e.read().decode("utf-8")
-            err_json = json.loads(body)
-            msg = err_json.get("error", {}).get("message", e.reason)
-            return False, f"Błąd {e.code}: {msg}"
-        except Exception:
-            return False, f"Błąd {e.code}: {e.reason}"
-    except Exception as e:
-        return False, f"Błąd połączenia: {e}"
-
-def load_saved_keys():
-    """Wczytuje listę zapamiętanych kluczy z keys.json."""
-    if os.path.exists(KEYS_FILE):
-        try:
-            with open(KEYS_FILE, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-        except Exception:
-            return []
-    return []
-
-def save_known_key(api_key, name="osobisty"):
-    """Zapisuje lub aktualizuje nazwę klucza w keys.json."""
-    keys = load_saved_keys()
-    updated = False
-    for item in keys:
-        if isinstance(item, dict) and item.get("key") == api_key:
-            if name:
-                item["name"] = name
-            updated = True
-            break
-    if not updated:
-        keys.append({
-            "name": name or "osobisty",
-            "key": api_key,
-            "added_at": time.strftime("%Y-%m-%d %H:%M")
-        })
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(KEYS_FILE, "w") as f:
-        json.dump(keys, f, indent=2)
-    os.chmod(KEYS_FILE, 0o600)
-
-def find_available_keys():
-    """Wyszukuje wszystkie dostępne klucze: z keys.json, config.json, env i .env."""
-    found = []
-    seen = set()
-
-    # 1. Z pliku zapamiętanych kluczy (keys.json)
-    for item in load_saved_keys():
-        k = item.get("key", "").strip()
-        name = item.get("name") or item.get("label") or "osobisty"
-        if k and k not in seen:
-            seen.add(k)
-            found.append({
-                "key": k,
-                "name": name,
-                "source": "zapisany"
-            })
-
-    # 2. Z obecnego config.json (jeśli jest)
-    cfg = load_config()
-    current_k = cfg.get("api_key", "").strip()
-    current_name = cfg.get("key_name", "aktywny")
-    if current_k and current_k not in seen:
-        seen.add(current_k)
-        found.append({
-            "key": current_k,
-            "name": current_name,
-            "source": "aktywny"
-        })
-
-    # 3. Ze zmiennej środowiskowej GROQ_API_KEY
-    env_k = os.environ.get("GROQ_API_KEY", "").strip()
-    if env_k and env_k not in seen:
-        seen.add(env_k)
-        found.append({
-            "key": env_k,
-            "name": "GROQ_API_KEY (env)",
-            "source": "env"
-        })
-
-    # 4. Z lokalnego pliku .env (jeśli istnieje)
-    if os.path.exists(".env"):
-        try:
-            with open(".env", "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("GROQ_API_KEY="):
-                        val = line.split("=", 1)[1].strip().strip("'\"")
-                        if val and val not in seen:
-                            seen.add(val)
-                            found.append({
-                                "key": val,
-                                "name": ".env",
-                                "source": ".env"
-                            })
-        except Exception:
-            pass
-
-    return found
-
-def mask_key(k):
-    if len(k) > 10:
-        return k[:7] + "..." + k[-4:]
-    return "***"
+# -----------------------------------------------------------------------------
+# Uproszczona obsługa Auth (login / status / logout)
+# -----------------------------------------------------------------------------
 
 def auth_login():
-    print(f"\n{BOLD}{MAGENTA}◆ Groq CLI Authentication (Omarchy Helper){RESET}\n")
+    """Proste logowanie kluczem API Groq."""
+    print(f"\n{BOLD}{MAGENTA}◆ Logowanie do Groq API (Omarchy Helper){RESET}\n")
+    print("Darmowy klucz API uzyskasz na:")
+    print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
 
-    available_keys = find_available_keys()
-    chosen_key = None
-    chosen_name = None
+    try:
+        ans = input(f"{DIM}Czy otworzyć stronę w przeglądarce? [T/n]: {RESET}").strip().lower()
+        if ans in ("", "t", "y", "tak", "yes"):
+            open_url_in_browser(GROQ_KEYS_URL)
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{YELLOW}Anulowano.{RESET}\n")
+        return
 
-    if available_keys:
-        print(f"{BOLD}Dostępne klucze API:{RESET}\n")
-        for i, item in enumerate(available_keys, 1):
-            masked = mask_key(item["key"])
-            name_badge = f"{BOLD}{CYAN}{item['name']:<18}{RESET}"
-            print(f"  {CYAN}[{i}]{RESET} {name_badge} {DIM}{masked}{RESET}")
-        
-        new_option_idx = len(available_keys) + 1
-        print(f"  {CYAN}[{new_option_idx}]{RESET} {YELLOW}+ Dodaj nowy klucz (otwórz przeglądarkę){RESET}")
-        print(f"\n{DIM}[Wybierz numer 1-{new_option_idx} | Enter = [1] | Ctrl+C = anuluj]{RESET}")
-        
-        try:
-            choice = input(f"{BOLD}Wybór [1]: {RESET}").strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-            sys.exit(0)
+    try:
+        key = input(f"\n{BOLD}Wklej Groq API Key (gsk_...): {RESET}").strip()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{YELLOW}Anulowano.{RESET}\n")
+        return
 
-        if not choice or choice == "1":
-            chosen_key = available_keys[0]["key"]
-            chosen_name = available_keys[0]["name"]
-        elif choice.isdigit():
-            idx = int(choice) - 1
-            if 0 <= idx < len(available_keys):
-                chosen_key = available_keys[idx]["key"]
-                chosen_name = available_keys[idx]["name"]
-            elif idx == len(available_keys):
-                chosen_key = None
-            else:
-                print(f"{RED}✗ Nieprawidłowy numer.{RESET}\n")
-                sys.exit(1)
-        elif choice.lower() in ("q", "quit", "cancel", "anuluj"):
-            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-            sys.exit(0)
-        else:
-            print(f"{RED}✗ Nieprawidłowy wybór.{RESET}\n")
-            sys.exit(1)
+    if not key:
+        print(f"{RED}✗ Nie podano klucza.{RESET}\n")
+        return
 
-    # Jeśli nie wybrano z listy lub wybrano '+ Dodaj nowy klucz'
-    if not chosen_key:
-        print(f"Aby uzyskać lub wygenerować darmowy klucz API, przejdź do:")
-        print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
+    print(f"{DIM}Weryfikacja klucza API...{RESET}", end="", flush=True)
+    models, err = fetch_available_models(key)
+    print("\r" + " " * 35 + "\r", end="")
 
-        print(f"{DIM}Naciśnij dowolny klawisz, aby otworzyć przeglądarkę (lub 's' / Ctrl+C aby pominąć): {RESET}", end="", flush=True)
-        try:
-            if sys.stdin.isatty():
-                import termios
-                import tty
-                fd = sys.stdin.fileno()
-                old = termios.tcgetattr(fd)
-                try:
-                    tty.setraw(fd)
-                    ch = sys.stdin.read(1)
-                finally:
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
-                print()
-                if ch == '\x03':  # Ctrl+C
-                    print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-                elif ch.lower() in ('s', 'n', 'q'):
-                    print(f"{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-                else:
-                    print(f"{CYAN}➜ Otwieram przeglądarkę...{RESET}\n")
-                    open_url_in_browser(GROQ_KEYS_URL)
-            else:
-                print()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{DIM}Pominięto otwieranie przeglądarki.{RESET}\n")
-        except Exception:
-            print()
+    if err:
+        print(f"{RED}✗ Błąd weryfikacji: {err}{RESET}")
+        print(f"{DIM}Sprawdź czy klucz jest poprawny.{RESET}\n")
+        return
 
-        print(f"{DIM}Skopiuj klucz API z otwartej strony (lub utwórz nowy: 'Create API Key') i wklej poniżej:{RESET}")
-        print(f"{DIM}[Opcje klawiszowe: wklej klucz i Enter | Ctrl+C lub pusty Enter = anuluj]{RESET}\n")
-        
-        try:
-            raw_key = getpass.getpass(f"{BOLD}Wklej swój Groq API Key (gsk_...) [Ctrl+C = anuluj]: {RESET}")
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-            sys.exit(0)
-            
-        api_key = raw_key.strip().strip("'\"")
-        if not api_key or api_key.lower() in ("q", "quit", "cancel", "anuluj") or api_key.startswith("\x1b"):
-            print(f"\n{YELLOW}Anulowano logowanie.{RESET}\n")
-            sys.exit(0)
-        chosen_key = api_key
-
-        default_name = f"klucz-{len(available_keys) + 1}" if available_keys else "osobisty"
-        print(f"\n{DIM}Podaj nazwę dla tego klucza (np. osobisty, praca, dev):{RESET}")
-        try:
-            name_in = input(f"{BOLD}Nazwa klucza [{default_name}]: {RESET}").strip()
-            chosen_name = name_in or default_name
-        except (KeyboardInterrupt, EOFError):
-            chosen_name = default_name
-
-    print(f"\n{DIM}Weryfikacja klucza w API Groq...{RESET}", end="", flush=True)
-    is_valid, message = validate_key(chosen_key)
-    
-    if is_valid:
-        cfg = load_config()
-        cfg["api_key"] = chosen_key
-        cfg["key_name"] = chosen_name
-        # Jeśli model nie był ustawiony lub jest starym 404, ustaw domyślny 120b
-        if not cfg.get("model") or cfg.get("model") == "groq/compound":
-            cfg["model"] = DEFAULT_MODEL
-        save_config(cfg)
-        save_known_key(chosen_key, name=chosen_name)
-        print(f"\r{GREEN}✓ Zalogowano pomyślnie!{RESET}             ")
-        print(f"{DIM}Aktywny klucz: {CYAN}{chosen_name}{RESET} {DIM}({mask_key(chosen_key)}){RESET}")
-        print(f"{DIM}Aktywny model: {CYAN}{cfg['model']}{RESET}")
-        print(f"{DIM}Klucz zapisany w: {CONFIG_FILE}{RESET}\n")
-    else:
-        print(f"\r{RED}✗ Weryfikacja nie powiodła się: {message}{RESET}\n")
-        try:
-            force = input(f"{YELLOW}Czy mimo to chcesz zapisać ten klucz? (t/N): {RESET}").strip().lower()
-            if force in ("t", "tak", "y", "yes"):
-                cfg = load_config()
-                cfg["api_key"] = chosen_key
-                cfg["key_name"] = chosen_name
-                cfg["model"] = cfg.get("model", DEFAULT_MODEL)
-                save_config(cfg)
-                save_known_key(chosen_key, name=chosen_name)
-                print(f"{GREEN}✓ Klucz został zapisany wymuszeniem.{RESET}\n")
-        except (KeyboardInterrupt, EOFError):
-            print("\nPrzerwano.")
+    cfg = load_config()
+    cfg["api_key"] = key
+    save_config(cfg)
+    print(f"{GREEN}✓ Zalogowano pomyślnie!{RESET} Klucz zapisano w: {DIM}{CONFIG_FILE}{RESET}\n")
 
 def auth_status():
+    """Wyświetla aktualny status autoryzacji."""
+    key = get_api_key()
+    if not key:
+        print(f"\n{YELLOW}! Brak aktywnego klucza Groq API.{RESET}")
+        print(f"{DIM}Zaloguj się: {CYAN}how auth login{RESET} lub ustaw zmienną {CYAN}GROQ_API_KEY{RESET}\n")
+        return
+
+    masked = key[:7] + "..." + key[-4:] if len(key) > 11 else "***"
+    source = "zmienna środowiskowa GROQ_API_KEY" if os.environ.get("GROQ_API_KEY") else CONFIG_FILE
     cfg = load_config()
-    key = cfg.get("api_key")
-    if key:
-        masked = mask_key(key)
-        name = cfg.get("key_name")
-        if not name:
-            for item in load_saved_keys():
-                if item.get("key") == key:
-                    name = item.get("name")
-                    break
-        name = name or "osobisty"
-        print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
-        print(f"  Nazwa klucza: {CYAN}{BOLD}{name}{RESET}")
-        print(f"  Model:        {CYAN}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
-        print(f"  Klucz:        {DIM}{masked}{RESET}\n")
-    else:
-        print(f"\n{YELLOW}! Nie jesteś zalogowany.{RESET} Użyj: {CYAN}how auth login{RESET}\n")
+    model = cfg.get("model", DEFAULT_MODEL)
+    verb = cfg.get("verbosity", DEFAULT_VERBOSITY)
+
+    print(f"\n{GREEN}✓ Zalogowano do Groq API{RESET}")
+    print(f"  Klucz:     {CYAN}{masked}{RESET} {DIM}(źródło: {source}){RESET}")
+    print(f"  Model:     {BOLD}{model}{RESET}")
+    print(f"  Verbosity: {BOLD}{verb}{RESET}\n")
 
 def auth_logout():
+    """Wylogowuje usuwając klucz z pliku konfiguracyjnego."""
     cfg = load_config()
     if cfg.get("api_key"):
         cfg.pop("api_key", None)
-        cfg.pop("key_name", None)
         save_config(cfg)
-        print(f"\n{GREEN}✓ Wylogowano (usunięto aktywną sesję).{RESET}")
-        print(f"{DIM}Klucz pozostaje zapamiętany w {KEYS_FILE} do szybkiego wyboru.{RESET}\n")
+        print(f"\n{GREEN}✓ Wylogowano.{RESET} Usunięto klucz z {CONFIG_FILE}.\n")
     else:
-        print(f"\n{DIM}Brak aktywnej sesji.{RESET}\n")
+        print(f"\n{DIM}Brak zapisanego klucza w {CONFIG_FILE}.{RESET}\n")
+
+# -----------------------------------------------------------------------------
+# Zarządzanie modelami i verbosity
+# -----------------------------------------------------------------------------
 
 def check_all_models():
-    """Testuje dostępność każdego z modeli mikro-zapytaniem i zapisuje status w konfiguracji."""
-    cfg = load_config()
-    api_key = cfg.get("api_key")
+    """Testuje dostępność każdego z modeli mikro-zapytaniem."""
+    import urllib.request
+    import urllib.error
+    api_key = get_api_key()
     if not api_key:
         print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
         auth_login()
-        cfg = load_config()
-        api_key = cfg.get("api_key")
+        api_key = get_api_key()
         if not api_key:
             return
 
-    print(f"\n{BOLD}{MAGENTA}◆ Testowanie dostępności modeli w Twoim koncie Groq...{RESET}\n")
+    print(f"\n{BOLD}{MAGENTA}◆ Testowanie dostępności modeli w koncie Groq...{RESET}\n")
     print(f"{DIM}Pobieranie listy modeli...{RESET}", end="", flush=True)
     models, err = fetch_available_models(api_key)
     print("\r" + " " * 35 + "\r", end="")
@@ -408,6 +253,7 @@ def check_all_models():
         print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
         return
 
+    cfg = load_config()
     tested = cfg.get("tested_models", {})
     headers = {
         **COMMON_HEADERS,
@@ -450,19 +296,19 @@ def check_all_models():
 
     cfg["tested_models"] = tested
     save_config(cfg)
-    print(f"\n{GREEN}✓ Zakończono test modeli.{RESET} Wyniki zapisano w: {DIM}{CONFIG_FILE}{RESET}\n")
+    print(f"\n{GREEN}✓ Zakończono test modeli.{RESET}\n")
 
 def select_model_interactive(direct_choice=None):
-    cfg = load_config()
-    api_key = cfg.get("api_key")
+    """Wybiera aktywny model Groq."""
+    api_key = get_api_key()
     if not api_key:
         print(f"{YELLOW}! Najpierw się zaloguj.{RESET}")
         auth_login()
-        cfg = load_config()
-        api_key = cfg.get("api_key")
+        api_key = get_api_key()
         if not api_key:
             return
 
+    cfg = load_config()
     current_model = cfg.get("model", DEFAULT_MODEL)
 
     print(f"\n{DIM}Pobieranie listy modeli z Groq API...{RESET}", end="", flush=True)
@@ -473,13 +319,11 @@ def select_model_interactive(direct_choice=None):
         print(f"{RED}✗ Nie udało się pobrać modeli: {err}{RESET}")
         return
 
-    # Jeśli podano argument bezpośrednio
     if direct_choice:
         if direct_choice.lower() == "check":
             check_all_models()
             return
 
-        # Można podać numer lub nazwę
         if direct_choice.isdigit():
             idx = int(direct_choice) - 1
             if 0 <= idx < len(models):
@@ -497,40 +341,31 @@ def select_model_interactive(direct_choice=None):
 
     tested = cfg.get("tested_models", {})
 
-    # Wyświetl listę modeli
-    print(f"\n{BOLD}{MAGENTA}◆ Dostępne modele tekstowe w Twoim koncie Groq:{RESET}\n")
+    print(f"\n{BOLD}{MAGENTA}◆ Dostępne modele w Twoim koncie Groq:{RESET}\n")
     for i, m in enumerate(models, 1):
         is_active = (m == current_model)
-        active_badge = f"{GREEN}(✓ aktywny){RESET}" if is_active else ""
-        
-        # Oznaczenie testu dostępności
-        t_info = tested.get(m)
-        if t_info:
-            if t_info.get("ok"):
-                ms = t_info.get("latency_ms")
-                test_badge = f"{GREEN}[✓ {ms}ms]{RESET}" if ms else f"{GREEN}[✓]{RESET}"
+        star = f"{GREEN}* {RESET}" if is_active else "  "
+        m_name = f"{BOLD}{CYAN}{m:<35}{RESET}" if is_active else f"{m:<35}"
+
+        status_str = ""
+        if m in tested:
+            if tested[m].get("ok"):
+                ms = tested[m].get("latency_ms", "-")
+                status_str = f" {GREEN}✓{RESET} {DIM}({ms}ms){RESET}"
             else:
-                err_msg = t_info.get("error", "niedostępny")
-                test_badge = f"{RED}[✗ {err_msg}]{RESET}"
-        else:
-            test_badge = ""
+                status_str = f" {RED}✗{RESET} {DIM}(niedostępny){RESET}"
 
-        desc = ""
-        if "120b" in m:
-            desc = f"{YELLOW}[OpenAI 120B - najpotężniejszy i rekomendowany]{RESET}"
-        elif "20b" in m:
-            desc = f"{DIM}[OpenAI 20B - ultra szybki]{RESET}"
-        elif "qwen" in m:
-            desc = f"{DIM}[Qwen 3.8 27B - bardzo szybki]{RESET}"
-            
-        print(f"  {CYAN}[{i}]{RESET} {BOLD}{m:<32}{RESET} {active_badge} {test_badge} {desc}")
+        print(f"{star}[{i:2d}] {m_name}{status_str}")
 
-    print(f"\n{DIM}Naciśnij Enter, aby zachować obecny ({current_model}), lub podaj numer [1-{len(models)}]:{RESET}")
-    print(f"{DIM}(Wskazówka: uruchom '{CYAN}how model check{RESET}{DIM}', aby zaktualizować statusy działania modeli){RESET}")
+    print(f"\n{DIM}[Wpisz numer 1-{len(models)}, wpisz 'check' aby przetestować, lub Ctrl+C aby anulować]{RESET}")
     try:
-        choice = input(f"{BOLD}Wybór: {RESET}").strip()
+        choice = input(f"{BOLD}Wybór [{current_model}]: {RESET}").strip()
     except (KeyboardInterrupt, EOFError):
         print("\nAnulowano.")
+        return
+
+    if choice.lower() == "check":
+        check_all_models()
         return
 
     if choice.isdigit():
@@ -549,34 +384,279 @@ def select_model_interactive(direct_choice=None):
     else:
         print(f"\n{DIM}Pozostawiono model: {current_model}{RESET}\n")
 
+def set_verbosity_interactive(new_level=None):
+    """Konfiguruje domyślny tryb gadatliwości (zero, low, normal)."""
+    cfg = load_config()
+    current = cfg.get("verbosity", DEFAULT_VERBOSITY)
+
+    if new_level:
+        lvl = new_level.lower().strip()
+        if lvl in ("0", "zero", "none", "quiet"):
+            lvl = "zero"
+        elif lvl in ("1", "low", "minimal", "min"):
+            lvl = "low"
+        elif lvl in ("2", "normal", "default", "standard"):
+            lvl = "normal"
+        else:
+            print(f"{RED}✗ Nieprawidłowy poziom verbosity: '{new_level}'{RESET}")
+            print(f"{DIM}Dozwolone: zero (tylko komenda), low (minimalny opis), normal (standardowy opis){RESET}\n")
+            return
+        cfg["verbosity"] = lvl
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Zmieniono domyślny tryb verbosity na: {BOLD}{lvl}{RESET}\n")
+        return
+
+    print(f"\n{BOLD}{MAGENTA}◆ Wybór domyślnego trybu szczegółowości (verbosity){RESET}\n")
+    print(f"  Aktualny tryb: {BOLD}{CYAN}{current}{RESET}\n")
+    print(f"  {BOLD}1{RESET}) {BOLD}zero{RESET}   - Tylko podpowiedź komendy (brak opisów, czysty wynik)")
+    print(f"  {BOLD}2{RESET}) {BOLD}low{RESET}    - Minimalny opis (1 krótkie zdanie co to jest + komenda)")
+    print(f"  {BOLD}3{RESET}) {BOLD}normal{RESET} - Standardowy poziom (1-2 zdania zwięzłego wyjaśnienia + komenda)\n")
+
+    try:
+        ans = input(f"{CYAN}Wybierz tryb [1-3 / zero / low / normal] (domyślnie: {current}):{RESET} ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return
+
+    mapping = {
+        "1": "zero", "zero": "zero", "0": "zero",
+        "2": "low", "low": "low",
+        "3": "normal", "normal": "normal"
+    }
+    chosen = mapping.get(ans)
+    if chosen:
+        cfg["verbosity"] = chosen
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Zapisano domyślny tryb verbosity: {BOLD}{chosen}{RESET}\n")
+    elif not ans:
+        print(f"\n{DIM}Pozostawiono tryb: {current}{RESET}\n")
+    else:
+        print(f"\n{RED}✗ Niepoprawny wybór.{RESET}\n")
+
+# -----------------------------------------------------------------------------
+# Lokalny RAG dla manuali systemowych i Omarchy (tldr, man, --help)
+# -----------------------------------------------------------------------------
+
+TLDR_DIRS = [
+    os.path.expanduser("~/.cache/tldr/pages"),
+    os.path.expanduser("~/.local/share/tldr/pages"),
+    "/usr/share/tldr/pages"
+]
+
+COMMON_STOPWORDS = {
+    "how", "to", "in", "on", "a", "an", "the", "is", "are", "was", "were",
+    "do", "does", "did", "can", "could", "should", "would", "i", "you", "my",
+    "we", "it", "for", "with", "and", "or", "of", "at", "from", "by", "as",
+    "if", "then", "else", "not", "no", "yes", "all", "any", "some", "what",
+    "which", "who", "whom", "this", "that", "these", "those", "there", "here",
+    "jak", "w", "na", "do", "z", "ze", "o", "dla", "po", "co", "to", "jest",
+    "czy", "sie", "się", "lub", "albo", "i", "oraz", "jaki", "jaka", "jakie",
+    "omarchy", "linux", "arch", "console", "terminal", "bash", "zsh", "command",
+    "komenda", "polecenie", "program", "narzedzie", "narzędzie", "skrypt",
+    "show", "list", "check", "get", "set", "run", "make", "create", "remove",
+    "delete", "pokaz", "pokaż", "sprawdz", "sprawdź", "usun", "usuń", "włącz",
+    "wyłącz", "restart", "uruchom", "zainstaluj", "install", "update", "upgrade"
+}
+
+def get_tldr_content(cmd):
+    """Odczytuje stronę tldr bezpośrednio z lokalnego cache Markdown."""
+    for base in TLDR_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for platform in ("linux", "common", "osx"):
+            target = os.path.join(base, platform, f"{cmd}.md")
+            if os.path.isfile(target):
+                try:
+                    with open(target, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = [l for l in f.read().splitlines() if not l.startswith("Found ")]
+                        return "\n".join(lines[:35]).strip()
+                except Exception:
+                    pass
+    return None
+
+def get_man_summary(cmd):
+    """Pobiera zwięzły początek systemowej strony podręcznika man."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["man", "-P", "cat", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=1
+        )
+        if proc.returncode == 0 and proc.stdout:
+            lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+            return "\n".join(lines[:25]).strip()
+    except Exception:
+        pass
+    return None
+
+def get_cli_help(cmd):
+    """Pobiera pomoc bezpośrednio z polecenia (np. cmd --help)."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            [cmd, "--help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=1
+        )
+        out = proc.stdout if proc.stdout.strip() else proc.stderr
+        if out.strip():
+            lines = [l.strip() for l in out.splitlines() if l.strip()]
+            return "\n".join(lines[:25]).strip()
+    except Exception:
+        pass
+    return None
+
+def extract_candidate_commands(query):
+    """Wyciąga potencjalne nazwy poleceń CLI z zapytania użytkownika."""
+    tokens = re.findall(r"[a-zA-Z0-9_\-\.]+", query.lower())
+    candidates = []
+    for t in tokens:
+        t_clean = t.strip(".-_")
+        if len(t_clean) < 2 or t_clean in COMMON_STOPWORDS:
+            continue
+        if t_clean not in candidates:
+            candidates.append(t_clean)
+    return candidates
+
+def get_system_docs_context(query):
+    """
+    Szybki lokalny RAG: sprawdza czy w zapytaniu występuje polecenie systemowe
+    i dołącza jego lokalną dokumentację (tldr -> man -> --help) do kontekstu Groq.
+    """
+    paths = os.environ.get("PATH", "").split(os.path.pathsep)
+    bins = set()
+    for p in paths:
+        if os.path.isdir(p):
+            try:
+                for entry in os.listdir(p):
+                    bins.add(entry)
+            except Exception:
+                pass
+
+    candidates = extract_candidate_commands(query)
+    found_docs = []
+    for cmd in candidates:
+        if cmd not in bins and not cmd.startswith("omarchy-"):
+            continue
+
+        # 1. Sprawdź tldr
+        t = get_tldr_content(cmd)
+        if t:
+            found_docs.append(f"=== Official TLDR documentation for '{cmd}' ===\n{t}")
+            if len(found_docs) >= 2:
+                break
+            continue
+
+        # 2. Sprawdź man
+        m = get_man_summary(cmd)
+        if m:
+            found_docs.append(f"=== System manual (man) for '{cmd}' ===\n{m}")
+            if len(found_docs) >= 2:
+                break
+            continue
+
+        # 3. Sprawdź --help
+        h = get_cli_help(cmd)
+        if h:
+            found_docs.append(f"=== CLI help output for '{cmd}' ===\n{h}")
+            if len(found_docs) >= 2:
+                break
+
+    if not found_docs:
+        return ""
+    return "\n\n" + "\n\n".join(found_docs)
+
+# -----------------------------------------------------------------------------
+# Przetwarzanie promptów, poleceń i schowka
+# -----------------------------------------------------------------------------
+
 def format_query(raw_query):
-    """
-    Optymalizuje i automatyzuje prompt w kontekście konsoli Omarchy.
-    np. 'how to ping internet?' -> 'In Omarchy console how to ping internet?'
-    np. 'auth works on omarchy?' -> 'In Omarchy console: how auth works on omarchy?'
-    np. 'jak zresetować hyprland' -> 'In Omarchy console: jak zresetować hyprland'
-    """
+    """Optymalizuje prompt w kontekście konsoli Omarchy."""
     q = raw_query.strip()
-    
-    # Jeśli użytkownik już wpisał 'in omarchy', nie dublujemy
     if "in omarchy" in q.lower():
         return q
 
-    # Sprawdź konstrukcję 'to ...' (np. 'how to ping internet?')
+    # Usuń ewentualny zbędny przedrostek 'to' jeśli podano 'how to ...'
     if q.lower().startswith("to "):
         return f"In Omarchy console how {q}"
-    elif q.lower().startswith("how to "):
-        return f"In Omarchy console {q}"
-    elif q.lower().startswith("how "):
-        return f"In Omarchy console: {q}"
     else:
-        # np. 'auth works on omarchy?' -> 'In Omarchy console: how auth works on omarchy?'
         if any(q.lower().startswith(prefix) for prefix in ("auth ", "model ", "display ", "audio ", "network ")):
             return f"In Omarchy console: how {q}"
         return f"In Omarchy console: {q}"
 
+def log_command_proposal(query, command, executed=False):
+    """Zapisuje propozycję komendy do lokalnego logu ~/.config/how/commands.log"""
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(COMMANDS_LOG, "a", encoding="utf-8") as f:
+            status = "WYKONANO" if executed else "ZAPROPONOWANO"
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            q_clean = query.strip() if query else "-"
+            f.write(f"[{ts}] [{status}] Pytanie: \"{q_clean}\" | Komenda: {command.strip()}\n")
+    except Exception:
+        pass
+
+def copy_to_clipboard(text):
+    """Kopiuje tekst do schowka Wayland (wl-copy) lub X11 (xclip), jeśli dostępne."""
+    import subprocess
+    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard"]):
+        try:
+            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            p.communicate(input=text.encode("utf-8"), timeout=1)
+            if p.returncode == 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+def print_shell_init(shell="bash"):
+    """Generuje kod integracji powłoki dla synchronizacji historii."""
+    print(f"# how - asystent CLI dla Omarchy (integracja z historią {shell})")
+    print(f"# Dodaj do pliku konfiguracyjnego powłoki lub uruchom: eval \"$(how init)\"")
+    print("how() {")
+    print('    command how "$@"')
+    print('    local exit_code=$?')
+    print('    if [ -f ~/.bash_history ]; then')
+    print('        history -r ~/.bash_history 2>/dev/null')
+    print('    fi')
+    print('    return $exit_code')
+    print("}")
+
+def show_command_history(limit=15, filter_term=None):
+    """Wyświetla ostatnie proponowane komendy."""
+    if not os.path.exists(COMMANDS_LOG):
+        print(f"\n{DIM}Brak zarejestrowanych komend w historii.{RESET}\n")
+        return
+
+    try:
+        with open(COMMANDS_LOG, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        if filter_term:
+            ft = filter_term.lower()
+            lines = [l for l in lines if ft in l.lower()]
+
+        print(f"\n{BOLD}{MAGENTA}◆ Historia proponowanych komend{RESET}\n")
+        if not lines:
+            print(f"  {DIM}Brak komend pasujących do filtru.{RESET}\n")
+            return
+        recent = lines[-limit:]
+        for line in recent:
+            if "[WYKONANO]" in line:
+                print(f"  {GREEN}✓{RESET} {DIM}{line}{RESET}")
+            else:
+                print(f"  {CYAN}➜{RESET} {DIM}{line}{RESET}")
+        print(f"\n{DIM}Wskazówka: Komendy są zapisywane w ~/.bash_history oraz kopiowane do schowka systemowego.{RESET}\n")
+    except Exception as e:
+        print(f"{RED}Błąd odczytu historii: {e}{RESET}\n")
+
 def save_to_bash_history(cmd):
-    """Zapisuje uruchomione polecenie do ~/.bash_history użytkownika."""
+    """Zapisuje polecenie do ~/.bash_history użytkownika."""
     try:
         hist_path = os.path.expanduser("~/.bash_history")
         with open(hist_path, "a", encoding="utf-8") as f:
@@ -585,25 +665,23 @@ def save_to_bash_history(cmd):
         pass
 
 def extract_executable_command(text):
-    """
-    Wyodrębnia pierwszą jednoznaczną komendę z bloku ```bash ... ``` lub ```sh ... ```.
-    Zwraca polecenie do wstawienia w pole edycji, lub None jeśli to odpowiedź opisowa.
-    """
+    """Wyodrębnia pierwszą komendę z bloku ```bash ... ``` lub ```sh ... ```."""
+    clean_text = text.strip().lower().rstrip(".!?:")
+    if clean_text in ("nie wiem", "nie wiem", "i don't know", "idk"):
+        return None
+
     m = re.search(r"```(?:bash|sh)?\s*\n(.*?)\n```", text, re.DOTALL)
     if not m:
         return None
 
     code = m.group(1).strip()
-    # Pomiń linie komentarzy i puste linie
     lines = [line.strip() for line in code.splitlines() if line.strip() and not line.strip().startswith("#")]
     if not lines:
         return None
 
-    # Jeśli jest jedna komenda (najczęstszy, pewny przypadek)
     if len(lines) == 1:
         return lines[0]
 
-    # Jeśli komendy tworzą krótką sekwencję (maksymalnie 3 linie)
     if len(lines) <= 3:
         control_keywords = ("if", "then", "else", "fi", "for", "while", "do", "done", "case", "esac")
         if not any(lines[0].startswith(kw) for kw in control_keywords):
@@ -611,68 +689,62 @@ def extract_executable_command(text):
 
     return lines[0]
 
-def prompt_command_in_editor(command):
+def display_suggested_command(command, query=""):
     """
-    Wstawia komendę bezpośrednio do edytowalnego pola wejścia (GNU Readline).
-    Użytkownik może wcisnąć Enter aby natychmiast uruchomić,
-    edytować argumenty strzałkami i backspacem,
-    lub wcisnąć Ctrl+C, aby bezpiecznie anulować.
+    Wypisuje sugerowaną komendę bezpośrednio w konsoli-rodzicu,
+    kopiuje ją do schowka i rejestruje w logu oraz historii basha.
+    how NIGDY nie uruchamia sam żadnej komendy ani konsoli potomnej!
     """
-    if not sys.stdin.isatty():
+    cmd = command.strip()
+    if not cmd:
         return
 
-    print(f"{DIM}[Enter: uruchom | Edytuj strzałkami/backspace | Ctrl+C: anuluj]{RESET}")
-    readline.set_startup_hook(lambda: readline.insert_text(command))
-    try:
-        user_cmd = input(f"{BOLD}{GREEN}➜{RESET} ")
-    except (KeyboardInterrupt, EOFError):
-        print(f"\n{YELLOW}Anulowano.{RESET}\n")
-        return
-    finally:
-        readline.set_startup_hook()
+    save_to_bash_history(cmd)
+    log_command_proposal(query, cmd, executed=False)
+    copied = copy_to_clipboard(cmd)
+    clip_hint = f" {GREEN}[skopiowano do schowka: wklej Ctrl+Shift+V]{RESET}" if copied else ""
 
-    final_cmd = user_cmd.strip()
-    if not final_cmd:
-        return
+    print(f"{BOLD}{CYAN}Sugerowana komenda:{RESET}{clip_hint}")
+    print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
-    # Zapis do historii basha
-    save_to_bash_history(final_cmd)
+# -----------------------------------------------------------------------------
+# Główne zapytanie do Groq API
+# -----------------------------------------------------------------------------
 
-    # Uruchomienie komendy
-    print(f"\n{DIM}Wykonywanie: {final_cmd}{RESET}\n")
-    try:
-        subprocess.run(final_cmd, shell=True)
-    except KeyboardInterrupt:
-        print(f"\n{YELLOW}Przerwano wykonywanie.{RESET}\n")
-    except Exception as e:
-        print(f"\n{RED}Błąd wykonania: {e}{RESET}\n")
-
-def ask_groq(raw_query):
-    cfg = load_config()
-    api_key = cfg.get("api_key")
+def ask_groq(raw_query, copy_only=False, verbosity=None):
+    import urllib.request
+    import urllib.error
+    api_key = get_api_key()
     if not api_key:
-        print(f"{YELLOW}! Wymagane pierwsze logowanie.{RESET}")
+        print(f"{YELLOW}! Wymagany klucz Groq API.{RESET}")
         auth_login()
-        cfg = load_config()
-        api_key = cfg.get("api_key")
+        api_key = get_api_key()
         if not api_key:
             return
 
+    cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
-    
-    # Jeśli stary niedziałający model został w configu, automatycznie napraw na 120b
     if model == "groq/compound":
         model = DEFAULT_MODEL
         cfg["model"] = model
         save_config(cfg)
 
-    # Przygotuj zapytanie zoptymalizowane pod Omarchy
+    if verbosity is None:
+        verbosity = cfg.get("verbosity", DEFAULT_VERBOSITY)
+    if verbosity not in ("zero", "low", "normal"):
+        verbosity = "normal"
+
     optimized_prompt = format_query(raw_query)
+    docs_context = get_system_docs_context(raw_query)
+    if docs_context:
+        optimized_prompt += f"\n\nContext from local system documentation:\n{docs_context}"
+
+    sys_prompt = get_system_prompt(verbosity)
 
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {"role": "user", "content": optimized_prompt}
         ],
         "stream": True,
@@ -691,7 +763,9 @@ def ask_groq(raw_query):
         headers=headers
     )
 
-    print(f"\n{CYAN}{BOLD}how ❯{RESET} {DIM}(model: {model}){RESET}\n")
+    if verbosity != "zero":
+        v_info = f", {verbosity}" if verbosity != "normal" else ""
+        print(f"\n{CYAN}{BOLD}how ❯{RESET} {DIM}(model: {model}{v_info}){RESET}\n")
 
     full_response = []
     try:
@@ -706,17 +780,29 @@ def ask_groq(raw_query):
                         chunk = json.loads(data_str)
                         delta = chunk["choices"][0]["delta"].get("content", "")
                         full_response.append(delta)
-                        sys.stdout.write(delta)
-                        sys.stdout.flush()
+                        if verbosity != "zero":
+                            sys.stdout.write(delta)
+                            sys.stdout.flush()
                     except Exception:
                         pass
-        print(f"{RESET}\n")
+        if verbosity != "zero":
+            print(f"{RESET}\n")
 
-        # Jeśli odpowiedź zawiera konkretną komendę, wstaw ją od razu w pole edycji
         full_text = "".join(full_response)
         cmd = extract_executable_command(full_text)
         if cmd:
-            prompt_command_in_editor(cmd)
+            if verbosity == "zero":
+                save_to_bash_history(cmd)
+                log_command_proposal(raw_query, cmd, executed=False)
+                copied = copy_to_clipboard(cmd)
+                clip_hint = f" {GREEN}[skopiowano: Ctrl+Shift+V]{RESET}" if copied else ""
+                print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint}\n")
+            else:
+                display_suggested_command(cmd, query=raw_query)
+        else:
+            if verbosity == "zero":
+                print(full_text.strip() + "\n")
+
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8")
         try:
@@ -724,107 +810,156 @@ def ask_groq(raw_query):
             msg = err_json.get("error", {}).get("message", err_msg)
         except Exception:
             msg = err_msg
-            
-        print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}")
-        if e.code == 404:
-            print(f"\n{YELLOW}Wskazówka: Model '{model}' może być niedostępny na Twoim koncie.{RESET}")
-            print(f"Uruchom: {CYAN}how model{RESET} aby wybrać aktywny model.\n")
+
+        if e.code == 429:
+            print(f"\n{YELLOW}⚡ Limit Groq API osiągnięty (429 Rate Limit). Spróbuj ponownie za chwilę.{RESET}\n")
+        elif e.code in (404, 503):
+            fallback_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+            untried = [m for m in fallback_models if m != model]
+            if untried:
+                next_model = untried[0]
+                print(f"\n{YELLOW}! Model '{model}' niedostępny ({e.code}).{RESET}")
+                print(f"{CYAN}➜ Automatyczny fallback na model: '{next_model}'...{RESET}\n")
+                cfg["model"] = next_model
+                save_config(cfg)
+                ask_groq(raw_query, copy_only=copy_only, verbosity=verbosity)
+                return
+            else:
+                print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}\n")
         else:
-            print("")
+            print(f"\n{RED}✗ Błąd Groq API ({e.code}): {msg}{RESET}\n")
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Przerwano przez użytkownika.{RESET}\n")
     except Exception as e:
         print(f"\n{RED}✗ Błąd połączenia: {e}{RESET}\n")
 
+# -----------------------------------------------------------------------------
+# Pomoc i punkt wejścia CLI
+# -----------------------------------------------------------------------------
+
 def print_help():
-    print(f"\n{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU\n")
-    print(f"{BOLD}Użycie:{RESET}")
-    print(f"  {CYAN}how{RESET}                        Uruchom tryb interaktywny (bez problemów ze znakami basha)")
-    print(f"  {CYAN}how to <pytanie...>{RESET}     np. {DIM}how to ping internet?{RESET}")
-    print(f"  {CYAN}how \"<pytanie...>\"{RESET}      np. {DIM}how \"to switch gh user (log to another account)\"{RESET}")
-    print(f"  {CYAN}how model{RESET}               Wybierz model z listy pobranej z API")
-    print(f"  {CYAN}how model check{RESET}         Przetestuj dostępność i ping wszystkich modeli")
-    print(f"  {CYAN}how auth login{RESET}          Zaloguj się kluczem Groq (otwiera przeglądarkę)")
-    print(f"  {CYAN}how auth status{RESET}         Sprawdź status logowania")
-    print(f"  {CYAN}how auth logout{RESET}         Wyloguj i usuń klucz\n")
-    print(f"{DIM}Wskazówka: Jeśli pytanie zawiera nawiasy '()', średniki ';' lub pipe'y '|', użyj trybu interaktywnego ('how') lub ujmij pytanie w cudzysłów.{RESET}\n")
+    print(f"""{BOLD}how{RESET} - Błyskawiczny asystent CLI dla Omarchy i Linuksa na Groq LPU
 
-def interactive_mode():
-    print(f"\n{BOLD}{MAGENTA}◆ how{RESET} {DIM}- Asystent CLI dla Omarchy i Linuksa na Groq LPU{RESET}")
-    print(f"{DIM}[Tryb interaktywny: wpisz dowolne pytanie | 'q', 'exit' lub Ctrl+C aby wyjść]{RESET}\n")
-    
-    while True:
-        try:
-            query = input(f"{CYAN}{BOLD}how ❯{RESET} ").strip()
-        except (KeyboardInterrupt, EOFError):
-            print("\n")
-            break
-            
-        if not query:
-            continue
-        if query.lower() in ("exit", "quit", "q", ":q"):
-            break
-            
-        # Obsługa podkomend w trybie interaktywnym
-        if query.lower() in ("model", "models"):
-            select_model_interactive()
-            print()
-            continue
-        elif query.lower() == "model check":
-            check_all_models()
-            print()
-            continue
-        elif query.lower() == "auth login":
-            auth_login()
-            print()
-            continue
-        elif query.lower() == "auth status":
-            auth_status()
-            print()
-            continue
-        elif query.lower() == "auth logout":
-            auth_logout()
-            print()
-            continue
-        elif query.lower() in ("help", "--help", "-h", "?"):
-            print_help()
-            continue
+{BOLD}SPOSÓB UŻYCIA:{RESET}
+  {CYAN}how [to] <pytanie...>{RESET}
+  {CYAN}how "<pytanie...>"{RESET}
+  {CYAN}how [opcje] [to] <pytanie...>{RESET}
+  {CYAN}how <podkomenda> [argumenty]{RESET}
 
-        ask_groq(query)
-        print()
+{BOLD}OPCJE ZAPYTANIA:{RESET}
+  {GREEN}-0, --zero{RESET}             Tryb zerowy: zwraca wyłącznie komendę w bloku kodu
+  {GREEN}--low{RESET}                  Tryb niski: minimalny 1-zdaniowy opis + komenda
+  {GREEN}--normal{RESET}               Tryb normalny (domyślny): zwięzłe wyjaśnienie + komenda
+  {GREEN}-v, --verbosity <tryb>{RESET} Wybór trybu jednorazowo: {DIM}zero, low, normal{RESET}
+  {GREEN}-c, --clip{RESET}             Kopiuj sugerowaną komendę do schowka
+
+{BOLD}PODKOMENDY:{RESET}
+  {CYAN}auth login{RESET}             Logowanie i zapis klucza Groq API
+  {CYAN}auth status{RESET}            Status bieżącej autoryzacji i model
+  {CYAN}auth logout{RESET}            Wylogowanie (usunięcie klucza z konfiguracji)
+
+  {CYAN}model{RESET}                  Interaktywny wybór modelu z listy API Groq
+  {CYAN}model check{RESET}            Test połączenia i opóźnień wszystkich modeli
+
+  {CYAN}verbosity [tryb]{RESET}       Wyświetl lub zmień domyślny poziom gadatliwości
+  {CYAN}history [filtr]{RESET}        Historia ostatnio proponowanych komend
+  {CYAN}init [bash|zsh]{RESET}        Skrypt integracji z historią powłoki
+
+{BOLD}PRZYKŁADY:{RESET}
+  {DIM}how to ping internet?{RESET}
+  {DIM}how -0 to restart pipewire audio{RESET}
+  {DIM}how "to switch gh user (log to another account)"{RESET}
+  {DIM}how verbosity low{RESET}
+""")
 
 def main():
     if len(sys.argv) < 2:
-        if sys.stdin.isatty():
-            interactive_mode()
-            sys.exit(0)
-        else:
-            print_help()
-            sys.exit(0)
-
-    args = sys.argv[1:]
-    first = args[0].lower()
-
-    if first in ("--help", "-h", "help") and len(args) == 1:
         print_help()
         sys.exit(0)
 
-    # Administracyjne podkomendy 'auth':
-    # Tylko jeśli wywołano 'how auth', 'how auth login', 'how auth status', 'how auth logout'
+    raw_args = sys.argv[1:]
+
+    if len(raw_args) == 1 and raw_args[0].lower() in ("--help", "-h", "help"):
+        print_help()
+        sys.exit(0)
+
+    # Shell init integration: how init [bash|zsh]
+    if raw_args[0].lower() == "init":
+        shell = raw_args[1] if len(raw_args) > 1 else "bash"
+        print_shell_init(shell)
+        sys.exit(0)
+
+    # Podkomenda 'verbosity': how verbosity [poziom]
+    if raw_args[0].lower() in ("verbosity", "verbose"):
+        target_v = raw_args[1] if len(raw_args) > 1 else None
+        set_verbosity_interactive(target_v)
+        sys.exit(0)
+
+    # Parsowanie flag (verbosity, clip)
+    verbosity = None
+    copy_only = False
+    args = []
+    i = 0
+    while i < len(raw_args):
+        a = raw_args[i]
+        a_lower = a.lower()
+        if a_lower in ("-c", "--clip", "--copy"):
+            copy_only = True
+            i += 1
+        elif a_lower in ("-0", "--zero", "-q", "--quiet"):
+            verbosity = "zero"
+            i += 1
+        elif a_lower == "--low":
+            verbosity = "low"
+            i += 1
+        elif a_lower == "--normal":
+            verbosity = "normal"
+            i += 1
+        elif a_lower in ("-v", "--verbosity"):
+            if i + 1 < len(raw_args):
+                verbosity = raw_args[i + 1].lower()
+                i += 2
+            else:
+                print(f"{RED}✗ Podaj poziom verbosity po fladze {a} (zero, low, normal).{RESET}")
+                sys.exit(1)
+        elif a_lower.startswith("--verbosity="):
+            verbosity = a.split("=", 1)[1].lower()
+            i += 1
+        elif a_lower.startswith("-v="):
+            verbosity = a.split("=", 1)[1].lower()
+            i += 1
+        else:
+            args.extend(raw_args[i:])
+            break
+
+    if not args:
+        print_help()
+        sys.exit(0)
+
+    first = args[0].lower()
+
+    # Uproszczone podkomendy 'auth': login, status, logout
     if first == "auth":
         if len(args) == 1:
             auth_status()
             sys.exit(0)
-        elif len(args) == 2 and args[1].lower() in ("login", "status", "logout"):
-            sub = args[1].lower()
-            if sub == "login":
-                auth_login()
-            elif sub == "status":
-                auth_status()
-            elif sub == "logout":
-                auth_logout()
+        sub = args[1].lower()
+        if sub in ("login", "in") and len(args) == 2:
+            auth_login()
             sys.exit(0)
-        # W przeciwnym razie: 'how auth works on omarchy?' to zapytanie użytkownika!
+        elif sub in ("logout", "out") and len(args) == 2:
+            auth_logout()
+            sys.exit(0)
+        elif sub == "status" and len(args) == 2:
+            auth_status()
+            sys.exit(0)
+        # W przeciwnym razie to zapytanie użytkownika (np. 'how auth works on omarchy?')
+
+    # Skróty historii
+    if first in ("history", "commands"):
+        filter_t = args[1] if len(args) > 1 else None
+        show_command_history(filter_term=filter_t)
+        sys.exit(0)
 
     # Administracyjne podkomendy 'model':
     if first in ("model", "models"):
@@ -839,11 +974,10 @@ def main():
             elif sub.isdigit() or "/" in sub:
                 select_model_interactive(args[1])
                 sys.exit(0)
-        # W przeciwnym razie to zapytanie użytkownika (np. 'how model selection works')
 
-    # Cała reszta to zapytanie do asystenta (np. 'to ping internet?' lub 'auth works on omarchy?')
+    # Cała reszta to zapytanie do asystenta
     query = " ".join(args)
-    ask_groq(query)
+    ask_groq(query, copy_only=copy_only, verbosity=verbosity)
 
 if __name__ == "__main__":
     main()

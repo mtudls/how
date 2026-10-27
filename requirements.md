@@ -232,3 +232,89 @@ Zestawienie promptów użytkownika definiujących wymagania funkcjonalne, archit
 > edge case:
 > how master  ❯ how to switch gh user (log to another account)
 > bash: syntax error near unexpected token `('
+
+---
+
+## Prompt 15: Multi-token authentication management, emails, usage limits, and command edit field history
+
+### Wersja oryginalna (PL):
+> najpierw dodaj obsługę logowania/tokenów:
+> 1. podczas logowania poproś o informację o mailu powiązanym z tokenem i zapisz przy tokenie.
+> 2. dodaj flow zmiany aktywnego tokenu.
+> 3. dodaj flow pobierania i wyświetlania % zużycia limitu dla każdego tokenu (aktywny zaznaczony *) wraz z mailem przypisanym.
+> 4. dodaj ew. inne przydatne funkcje tu.
+> 5. Najlepiej jeśli propozycja wykonywanej komendy była by w standardowym polu edycji, a nie w innynm, bo tak to nie będzie historii tych komend poponowanych. Jeśli nie da się łatwo to napisz, że za trundo.
+
+### English version below
+> First, add login / token management:
+> 1. During login, ask for the email associated with the token and save it alongside the token.
+> 2. Add a flow to switch the active token.
+> 3. Add a flow to fetch and display the % limit usage for each token (active marked with *) along with the assigned email.
+> 4. Add any other useful functions here.
+> 5. It would be best if the proposed command appeared in the standard edit field rather than a different one, because otherwise there won't be a history of those proposed commands. If it can't be done easily, say that it's too difficult.
+
+---
+
+## Prompt 16: No child console or subshell; output suggestions directly to parent console
+
+### Wersja oryginalna (PL):
+> 1. w trakcie wyołania narzędzia how w onsoli-rodzicu podpowiedź jest sugerowana w konsoli-dziecku (która jest uruchomiona wewnątrz konsoli-rodzica). Jest to zachowanie niepożądane. podpowiedź ma być wypiasna w konsoli-rodzicu i żadna inna konsola nie jest potrzebna i how nie może niczego takiego sam uruchamiać!
+> Zaproponuj implementacje która to uwzględnia.
+
+### English version below
+> 1. When running the `how` tool in the parent console, the suggestion is prompted inside a child console (which is launched inside the parent console). This is undesired behavior. The suggestion must be printed directly in the parent console, no other console is needed, and `how` must never execute anything like that on its own!
+> Propose an implementation that takes this into account.
+
+---
+
+## Prompt 17: Align with Omarchy CLI tool standards
+
+### Wersja oryginalna (PL):
+> ok, to uwzględnij te wymagania (jak narzędzia cli) i dostosuj how do tych wymagań.
+
+### English version below
+> ok, so take these requirements into account (like cli tools) and adapt `how` to these requirements.
+
+---
+
+## Prompt 18: Verbosity modes: zero, low, normal
+
+### Wersja oryginalna (PL):
+> ok. Dodaj trybw verbosity, zero (tylko podpowiedź komendy) low (minimalny opis co to jest) normal (dotychczasowy poziom opisu)
+
+### English version below
+> ok. Add verbosity modes: zero (only command suggestion), low (minimal description of what it is), normal (current description level).
+
+---
+
+## Prompt 19: Remove interactive mode & maximally simplify auth
+
+### Wersja oryginalna (PL):
+> tryb interaktywny wydaje się niepotrzebny. Upraszczać na maksa!
+> uprość opcje auth
+
+### English version below
+> Interactive mode seems unnecessary. Simplify to the maximum!
+> Simplify auth options.
+
+---
+
+## Prompt 20: Safe uncertainty handling ("niewiem")
+
+### Wersja oryginalna (PL):
+> ważna uwaga: jeśli model nie jest pewien odpowiedzi, niech how zwraca odpowiedź niewiem.
+
+### English version below
+> Important note: if the model is not certain of the answer, make `how` return the answer "niewiem".
+
+---
+
+## Prompt 21: Local RAG (concept 1 from ideas.md)
+
+### Wersja oryginalna (PL):
+> zaimpelementuj pomysł 1 z ideas w koncepcji 1
+
+### English version below
+> implement idea 1 from ideas.md in concept 1 (local documentation context from tldr/man/--help).
+
+
