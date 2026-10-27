@@ -101,29 +101,44 @@ Hits return near-instantly (<1ms), refresh their TTL window, and are marked with
 
 ---
 
-## Local Testing & Verification
+## Local Testing & CI Simulation
 
-Run the exact CI/CD pipeline and Verification & Validation (V&V) matrix locally:
+You can test and verify `how` locally using three levels of isolation:
 
-### Option 1: Native Python (Fastest)
+### Option 1: Native Python (Sub-second V&V)
+
+Runs unit checks, latency benchmarks, cache TTL sliding, and behavioral prompt assertions:
 
 ```bash
-# Run the complete V&V suite (performance, cache, behavior, prompts):
 python3 tests/test_vv_suite.py
 ```
 
-### Option 2: Isolated Docker Container
+### Option 2: Docker Environment
 
-Run all linters, compile checks, security scans, and tests in a clean container:
+Runs the entire test, lint (`ruff`, `flake8`), and security audit (`bandit`) suite inside a clean Python container:
 
 ```bash
-# Using the provided Dockerfile.test
 docker build -t how-test -f Dockerfile.test .
 docker run --rm how-test
+```
 
-# Or as a one-liner without building:
-docker run --rm -v "$PWD":/app -w /app python:3.11-slim bash -c \
-  "pip install -q ruff flake8 bandit && python -m py_compile how tests/test_vv_suite.py && bash -n install.sh && ruff check how && flake8 how --max-line-length=120 --extend-ignore=E501,E402,E722,F401,F841,E302,E305 && bandit -r how -ll --skip B310,B603,B607 && python tests/test_vv_suite.py"
+### Option 3: Local GitHub Actions Simulation (`act`)
+
+Simulate and run exact GitHub Actions workflows locally using Docker:
+
+```bash
+# Install gh act extension (if not already installed)
+gh extension install nektos/gh-act
+
+# List all local workflows discovered in .github/workflows/
+gh act -l
+
+# Run the complete push event workflows locally:
+gh act push
+
+# Or run a specific job (e.g. Lint, Security, or Release):
+gh act -j lint
+gh act -j bandit
 ```
 
 ---
