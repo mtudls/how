@@ -34,6 +34,8 @@ def load_how_module():
 def run_how(args, env_override=None, timeout=5):
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
+    env["HOW_NO_BROWSER"] = "1"
+    env["BROWSER"] = "true"  # Fallback for standard unix browser openers
     if env_override:
         env.update(env_override)
     t0 = time.perf_counter()
