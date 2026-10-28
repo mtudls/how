@@ -82,6 +82,7 @@ Run tests and checks locally:
 ```bash
 # 1. Native test suite (sub-second performance & behavior checks)
 python3 tests/test_vv_suite.py
+how test  # Built-in self-test (runs A/B comparison if WIP differs from installed)
 
 # 2. Containerized pipeline (lint, security, tests)
 docker build -t how-test -f Dockerfile.test .

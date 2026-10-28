@@ -1379,6 +1379,118 @@ def open_feedback_url(query=""):
     if not open_url_in_browser(url):
         print(f"{YELLOW}! Could not open browser automatically. Visit the link above to submit feedback.{RESET}\n")
 
+def run_self_test(use_docker=False):
+    """
+    Runs self-test & Verification and Validation (V&V).
+    Compares installed binary vs current work-in-progress (A/B testing) if different.
+    """
+    import subprocess
+
+    if use_docker:
+        print(f"\n{BOLD}{MAGENTA}◆ Running containerized self-test (Docker)...{RESET}\n")
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        docker_file = os.path.join(repo_dir, "Dockerfile.test")
+        if not os.path.exists(docker_file):
+            print(f"{RED}✗ Dockerfile.test not found in {repo_dir}.{RESET}")
+            sys.exit(1)
+        build_cmd = ["docker", "build", "-t", "how-test", "-f", docker_file, repo_dir]
+        run_cmd = ["docker", "run", "--rm", "how-test"]
+        try:
+            print(f"{DIM}Building test image...{RESET}")
+            b_res = subprocess.run(build_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if b_res.returncode != 0:
+                print(f"{RED}✗ Docker build failed:\n{b_res.stderr}{RESET}")
+                sys.exit(1)
+            print(f"{DIM}Running test container...{RESET}\n")
+            r_res = subprocess.run(run_cmd)
+            sys.exit(r_res.returncode)
+        except Exception as e:
+            print(f"{RED}✗ Docker execution failed: {e}{RESET}")
+            sys.exit(1)
+
+    # 1. Detect binaries: Installed (A) vs Current / WIP (B)
+    current_bin = os.path.realpath(__file__)
+    # Find installed binary in PATH
+    installed_bin = None
+    path_env = os.environ.get("PATH", "")
+    for p in path_env.split(os.path.pathsep):
+        cand = os.path.join(p, "how")
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            installed_bin = cand
+            break
+
+    def get_file_sha256(path):
+        if not path or not os.path.isfile(path):
+            return ""
+        try:
+            with open(path, "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            return ""
+
+    current_hash = get_file_sha256(current_bin)
+    installed_hash = get_file_sha256(installed_bin) if installed_bin else ""
+
+    # Measure binary performance and behavior score
+    def benchmark_target(bin_path):
+        latencies = []
+        for _ in range(5):
+            t0 = time.perf_counter()
+            res = subprocess.run(
+                [sys.executable, bin_path, "--help"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            latencies.append((time.perf_counter() - t0) * 1000)
+            if res.returncode != 0:
+                return None, 0
+        avg_lat = sum(latencies) / len(latencies)
+        score = max(0, min(100, 100 - (avg_lat - 30) * 0.7)) if avg_lat > 30 else 100
+        return avg_lat, score
+
+    is_ab_mode = bool(installed_bin and (current_hash != installed_hash))
+
+    print(f"\n{BOLD}{MAGENTA}◆ how self-test{RESET}")
+
+    if is_ab_mode:
+        print(f"{DIM}Detected differences between installed version and local work-in-progress. Running A/B comparison...{RESET}\n")
+        print(f"  {BOLD}[A] Installed:{RESET}        {installed_bin} {DIM}(sha: {installed_hash[:8]}...){RESET}")
+        print(f"  {BOLD}[B] Work-in-progress:{RESET} {current_bin} {DIM}(sha: {current_hash[:8]}...){RESET}\n")
+
+        lat_a, score_a = benchmark_target(installed_bin)
+        lat_b, score_b = benchmark_target(current_bin)
+
+        print(f"  {'Metric':<25} {'[A] Installed':<18} {'[B] WIP (Current)':<18}")
+        print(f"  {'-'*65}")
+        lat_diff = ((lat_a - lat_b) / lat_a) * 100 if lat_a else 0
+        diff_str = f"({GREEN}▲ {abs(lat_diff):.1f}% faster{RESET})" if lat_diff > 0 else f"({YELLOW}▼ {abs(lat_diff):.1f}% slower{RESET})"
+        print(f"  {'Startup Latency':<25} {f'{lat_a:.2f} ms':<18} {f'{lat_b:.2f} ms {diff_str}':<18}")
+        print(f"  {'Performance Score':<25} {f'{score_a:.1f}/100':<18} {f'{score_b:.1f}/100':<18}")
+
+        # Run behavioral test suite on WIP
+        test_script = os.path.join(os.path.dirname(current_bin), "tests", "test_vv_suite.py")
+        if os.path.exists(test_script):
+            t_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            wip_pass = t_res.returncode == 0
+            status_str = f"{GREEN}✓ All passed (No regressions){RESET}" if wip_pass else f"{RED}✗ Regression detected{RESET}"
+            print(f"  {'Behavioral V&V (WIP)':<25} {status_str}")
+        print()
+    else:
+        target = current_bin
+        lat, score = benchmark_target(target)
+        print(f"  Target: {target} {DIM}(sha: {current_hash[:8]}...){RESET}\n")
+        print(f"  • Startup Latency:    {lat:.2f} ms")
+        print(f"  • Performance Score:  {score:.1f}/100")
+        test_script = os.path.join(os.path.dirname(target), "tests", "test_vv_suite.py")
+        if os.path.exists(test_script):
+            t_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if t_res.returncode == 0:
+                print(f"  • Behavioral V&V:     {GREEN}✓ 100% Passed{RESET}")
+            else:
+                print(f"  • Behavioral V&V:     {RED}✗ Failed{RESET}")
+        print()
+
 def print_help():
     help_text = f"""Usage:
   {CYAN}how{RESET} [-0|--low] [--no-cache] <query...>
@@ -1391,6 +1503,7 @@ Commands:
   {CYAN}verbosity{RESET} [zero|low|normal]  Default output verbosity
   {CYAN}history{RESET} [filter]              Recent command suggestions
   {CYAN}feedback{RESET} [text...]            Send quick feedback directly from terminal
+  {CYAN}test{RESET} [--docker]               Run self-test (A/B comparison if modified)
 
 Options:
   {GREEN}-0, --zero{RESET}                   Command only (no explanation)
@@ -1482,6 +1595,12 @@ def main():
         sys.exit(0)
 
     first = args[0].lower()
+
+    # Podkomenda self-test / test
+    if first in ("self-test", "test", "check-self"):
+        use_docker = any(x in args[1:] for x in ("--docker", "-d", "docker"))
+        run_self_test(use_docker=use_docker)
+        sys.exit(0)
 
     # Podkomenda feedback: how feedback [opcjonalny opis/zapytanie]
     if first in ("feedback", "bug", "report", "issue"):
