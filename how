@@ -88,7 +88,7 @@ Response Rules (NORMAL VERBOSITY):
 2. Provide a 1-2 sentence concise explanation right after the code block.
 3. If the user's question is purely conceptual, explanatory, or general (not an actionable command request), do not output a bash code block; answer directly and concisely.
 4. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
-5. If not sure: answer "I don't know"."""
+5. If not sure: answer "I don't know."."""
 
 def open_url_in_browser(url):
     """Automatycznie otwiera przeglądarkę użytkownika w tle (jeśli nie wyłączono przez HOW_NO_BROWSER / testy)."""
@@ -1381,16 +1381,17 @@ def open_feedback_url(query=""):
     if not open_url_in_browser(url):
         print(f"{YELLOW}! Could not open browser automatically. Visit the link above to submit feedback.{RESET}\n")
 
-def run_self_test(use_docker=False):
+def run_self_test(use_docker=False, auto_stats=False):
     """
     Runs self-test & Verification and Validation (V&V).
-    Compares installed binary vs current work-in-progress (A/B testing) if different.
+    Delegates to tests/test_ab_bench.py to maintain complete process isolation and avoid recursion.
     """
     import subprocess
 
+    repo_dir = os.path.dirname(os.path.realpath(__file__))
+
     if use_docker:
         print(f"\n{BOLD}{MAGENTA}◆ Running containerized self-test (Docker)...{RESET}\n")
-        repo_dir = os.path.dirname(os.path.abspath(__file__))
         docker_file = os.path.join(repo_dir, "tests", "Dockerfile")
         if not os.path.exists(docker_file):
             print(f"{RED}✗ Dockerfile not found in {os.path.join(repo_dir, 'tests')}.{RESET}")
@@ -1410,169 +1411,22 @@ def run_self_test(use_docker=False):
             print(f"{RED}✗ Docker execution failed: {e}{RESET}")
             sys.exit(1)
 
-    # 1. Detect binaries: Installed (A) vs Current / WIP (B)
-    current_bin = os.path.realpath(__file__)
-    installed_bin = None
-    installed_content_bytes = None
-    installed_label = ""
-
-    path_env = os.environ.get("PATH", "")
-    for p in path_env.split(os.path.pathsep):
-        cand = os.path.join(p, "how")
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            # If it's a symlink directly pointing to this WIP file, installed is same inode.
-            # In that case, compare against the last committed git version (HEAD)
-            if os.path.realpath(cand) == current_bin:
-                try:
-                    res = subprocess.run(
-                        ["git", "-C", os.path.dirname(current_bin), "show", "HEAD:how"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    if res.returncode == 0 and res.stdout:
-                        installed_content_bytes = res.stdout
-                        installed_bin = "git:HEAD"
-                        installed_label = "Committed (HEAD)"
-                except Exception:
-                    pass
-            else:
-                installed_bin = cand
-                installed_label = cand
-            break
-
-    def get_sha256(data_bytes):
-        return hashlib.sha256(data_bytes).hexdigest() if data_bytes else ""
-
-    try:
-        with open(current_bin, "rb") as f:
-            current_bytes = f.read()
-    except Exception:
-        current_bytes = b""
-
-    current_hash = get_sha256(current_bytes)
-
-    if installed_bin == "git:HEAD" and installed_content_bytes is not None:
-        installed_hash = get_sha256(installed_content_bytes)
-    elif installed_bin and os.path.isfile(installed_bin):
-        try:
-            with open(installed_bin, "rb") as f:
-                installed_content_bytes = f.read()
-            installed_hash = get_sha256(installed_content_bytes)
-        except Exception:
-            installed_hash = ""
+    bench_script = os.path.join(repo_dir, "tests", "test_ab_bench.py")
+    if os.path.exists(bench_script):
+        cmd = [sys.executable, bench_script]
+        if auto_stats:
+            cmd.append("--stats")
+        res = subprocess.run(cmd)
+        sys.exit(res.returncode)
     else:
-        installed_hash = ""
-
-    # Measure binary performance and behavior score
-    def benchmark_target(bin_path, input_content=None):
-        import tempfile
-        tmp_script = None
-        target_exec = bin_path
-        if input_content is not None:
-            tmp_f = tempfile.NamedTemporaryFile("wb", delete=False)
-            tmp_f.write(input_content)
-            tmp_f.flush()
-            tmp_f.close()
-            os.chmod(tmp_f.name, 0o700)  # nosec B103
-            target_exec = tmp_f.name
-            tmp_script = tmp_f.name
-
-        try:
-            latencies = []
-            for _ in range(5):
-                t0 = time.perf_counter()
-                res = subprocess.run(
-                    [sys.executable, target_exec, "--help"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                latencies.append((time.perf_counter() - t0) * 1000)
-                if res.returncode != 0:
-                    return None, 0
-            avg_lat = sum(latencies) / len(latencies)
-            score = max(0, min(100, 100 - (avg_lat - 30) * 0.7)) if avg_lat > 30 else 100
-            return avg_lat, score
-        finally:
-            if tmp_script and os.path.exists(tmp_script):
-                try:
-                    os.remove(tmp_script)
-                except Exception:
-                    pass
-
-    is_ab_mode = bool(installed_bin and (current_hash != installed_hash))
-
-    print(f"\n{BOLD}{MAGENTA}◆ how self-test{RESET}")
-
-    if is_ab_mode:
-        print(f"{DIM}Detected differences between baseline version and local work-in-progress. Running A/B comparison...{RESET}\n")
-        print(f"  {BOLD}[A] Baseline:{RESET}         {installed_label} {DIM}(sha: {installed_hash[:8]}...){RESET}")
-        print(f"  {BOLD}[B] Work-in-progress:{RESET} {current_bin} {DIM}(sha: {current_hash[:8]}...){RESET}\n")
-
-        lat_a, score_a = benchmark_target(installed_bin, input_content=installed_content_bytes if installed_bin == "git:HEAD" else None)
-        lat_b, score_b = benchmark_target(current_bin)
-
-        print(f"  {'Metric':<25} {'[A] Baseline':<18} {'[B] WIP (Current)':<18}")
-        print(f"  {'-'*65}")
-        lat_diff = ((lat_a - lat_b) / lat_a) * 100 if lat_a else 0
-        diff_str = f"({GREEN}▲ {abs(lat_diff):.1f}% faster{RESET})" if lat_diff > 0 else f"({YELLOW}▼ {abs(lat_diff):.1f}% slower{RESET})"
-        print(f"  {'Startup Latency':<25} {f'{lat_a:.2f} ms':<18} {f'{lat_b:.2f} ms {diff_str}':<18}")
-        print(f"  {'Performance Score':<25} {f'{score_a:.1f}/100':<18} {f'{score_b:.1f}/100':<18}")
-
-        # Check code quality (syntax, ruff/flake8 if available)
-        def check_syntax(path, content=None):
-            import tempfile
-            target = path
-            tmp_f = None
-            if content is not None:
-                tmp_f = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".py")
-                tmp_f.write(content)
-                tmp_f.flush()
-                tmp_f.close()
-                target = tmp_f.name
-            try:
-                res = subprocess.run([sys.executable, "-m", "py_compile", target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                return res.returncode == 0
-            finally:
-                if tmp_f and os.path.exists(tmp_f.name):
-                    try:
-                        os.remove(tmp_f.name)
-                    except Exception:
-                        pass
-
-        syn_a = check_syntax(installed_bin, content=installed_content_bytes if installed_bin == "git:HEAD" else None)
-        syn_b = check_syntax(current_bin)
-        print(f"  {'Syntax / Compile':<25} {f'{GREEN}✓ Valid{RESET}' if syn_a else f'{RED}✗ Error{RESET}':<27} {f'{GREEN}✓ Valid{RESET}' if syn_b else f'{RED}✗ Error{RESET}':<27}")
-
-        # Run behavioral test suite on WIP
-        test_script = os.path.join(os.path.dirname(current_bin), "tests", "test_vv_suite.py")
-        wip_pass = True
+        # Fallback to direct V&V if bench script is missing
+        test_script = os.path.join(repo_dir, "tests", "test_vv_suite.py")
         if os.path.exists(test_script):
-            t_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            wip_pass = t_res.returncode == 0
-            status_str = f"{GREEN}✓ All passed (No regressions){RESET}" if wip_pass else f"{RED}✗ Regression detected{RESET}"
-            print(f"  {'Behavioral V&V (WIP)':<25} {status_str}")
-
-        print()
-        if wip_pass:
-            print(f"{BOLD}{GREEN}✓ Work-in-progress is ready to ship!{RESET}")
-            print(f"{DIM}Recommended Git workflow:{RESET}")
-            print(f"  {CYAN}git add -p && git commit -m \"feat: optimize command resolution\" && git push origin HEAD{RESET}")
-            print(f"  {CYAN}gh pr create --fill --web{RESET}\n")
-    else:
-        target = current_bin
-        lat, score = benchmark_target(target)
-        print(f"  Target: {target} {DIM}(sha: {current_hash[:8]}...){RESET}\n")
-        print(f"  • Startup Latency:    {lat:.2f} ms")
-        print(f"  • Performance Score:  {score:.1f}/100")
-        test_script = os.path.join(os.path.dirname(target), "tests", "test_vv_suite.py")
-        if os.path.exists(test_script):
-            t_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if t_res.returncode == 0:
-                print(f"  • Behavioral V&V:     {GREEN}✓ 100% Passed{RESET}")
-            else:
-                print(f"  • Behavioral V&V:     {RED}✗ Failed{RESET}")
-        print()
+            res = subprocess.run([sys.executable, test_script])
+            sys.exit(res.returncode)
+        else:
+            print(f"{RED}✗ Test suite not found in {repo_dir}/tests.{RESET}")
+            sys.exit(1)
 
 def print_help():
     help_text = f"""Usage:
@@ -1682,7 +1536,8 @@ def main():
     # Podkomenda self-test / test
     if first in ("self-test", "test", "check-self"):
         use_docker = any(x in args[1:] for x in ("--docker", "-d", "docker"))
-        run_self_test(use_docker=use_docker)
+        auto_stats = any(x in args[1:] for x in ("--stats", "-s", "--ci"))
+        run_self_test(use_docker=use_docker, auto_stats=auto_stats)
         sys.exit(0)
 
     # Podkomenda feedback: how feedback [opcjonalny opis/zapytanie]
