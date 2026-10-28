@@ -1326,7 +1326,7 @@ def send_terminal_feedback(message=""):
         payload = json.dumps({
             "feedback": message,
             "timestamp": now,
-            "version": "0.1.0",
+            "version": "0.1.1",
             "os": sys.platform
         }).encode("utf-8")
         req = urllib.request.Request(
@@ -1389,9 +1389,9 @@ def run_self_test(use_docker=False):
     if use_docker:
         print(f"\n{BOLD}{MAGENTA}◆ Running containerized self-test (Docker)...{RESET}\n")
         repo_dir = os.path.dirname(os.path.abspath(__file__))
-        docker_file = os.path.join(repo_dir, "Dockerfile.test")
+        docker_file = os.path.join(repo_dir, "tests", "Dockerfile")
         if not os.path.exists(docker_file):
-            print(f"{RED}✗ Dockerfile.test not found in {repo_dir}.{RESET}")
+            print(f"{RED}✗ Dockerfile not found in {os.path.join(repo_dir, 'tests')}.{RESET}")
             sys.exit(1)
         build_cmd = ["docker", "build", "-t", "how-test", "-f", docker_file, repo_dir]
         run_cmd = ["docker", "run", "--rm", "how-test"]

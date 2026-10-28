@@ -77,12 +77,12 @@ Paths:
 
 ## Verification & ASI (Automated Self-Improvement)
 
-Run tests locally or review autonomous improvement guidelines in [ASI.md](ASI.md):
+Run tests locally or review autonomous improvement guidelines in [docs/ASI.md](docs/ASI.md):
 
 ```bash
 how test  # Built-in self-test (runs A/B comparison against installed binary)
 python3 tests/test_vv_suite.py  # Native V&V benchmark suite (<1s)
-docker run --rm $(docker build -q -f Dockerfile.test .)  # Clean container audit
+docker run --rm $(docker build -q -f tests/Dockerfile .)  # Clean container audit
 ```
 
 ---
