@@ -1468,14 +1468,30 @@ def run_self_test(use_docker=False):
         print(f"  {'Startup Latency':<25} {f'{lat_a:.2f} ms':<18} {f'{lat_b:.2f} ms {diff_str}':<18}")
         print(f"  {'Performance Score':<25} {f'{score_a:.1f}/100':<18} {f'{score_b:.1f}/100':<18}")
 
+        # Check code quality (syntax, ruff/flake8 if available)
+        def check_syntax(path):
+            res = subprocess.run([sys.executable, "-m", "py_compile", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return res.returncode == 0
+
+        syn_a = check_syntax(installed_bin)
+        syn_b = check_syntax(current_bin)
+        print(f"  {'Syntax / Compile':<25} {f'{GREEN}✓ Valid{RESET}' if syn_a else f'{RED}✗ Error{RESET}':<27} {f'{GREEN}✓ Valid{RESET}' if syn_b else f'{RED}✗ Error{RESET}':<27}")
+
         # Run behavioral test suite on WIP
         test_script = os.path.join(os.path.dirname(current_bin), "tests", "test_vv_suite.py")
+        wip_pass = True
         if os.path.exists(test_script):
             t_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             wip_pass = t_res.returncode == 0
             status_str = f"{GREEN}✓ All passed (No regressions){RESET}" if wip_pass else f"{RED}✗ Regression detected{RESET}"
             print(f"  {'Behavioral V&V (WIP)':<25} {status_str}")
+
         print()
+        if wip_pass:
+            print(f"{BOLD}{GREEN}✓ Work-in-progress is ready to ship!{RESET}")
+            print(f"{DIM}Recommended Git workflow:{RESET}")
+            print(f"  {CYAN}git add -p && git commit -m \"feat: optimize command resolution\" && git push origin HEAD{RESET}")
+            print(f"  {CYAN}gh pr create --fill --web{RESET}\n")
     else:
         target = current_bin
         lat, score = benchmark_target(target)

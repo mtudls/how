@@ -75,22 +75,14 @@ Paths:
 
 ---
 
-## Local Verification & Testing
+## Verification & ASI (Automated Self-Improvement)
 
-Run tests and checks locally:
+Run tests locally or review autonomous improvement guidelines in [ASI.md](ASI.md):
 
 ```bash
-# 1. Native test suite (sub-second performance & behavior checks)
-python3 tests/test_vv_suite.py
-how test  # Built-in self-test (runs A/B comparison if WIP differs from installed)
-
-# 2. Containerized pipeline (lint, security, tests)
-docker build -t how-test -f Dockerfile.test .
-docker run --rm how-test
-
-# 3. Local GitHub Actions simulation (via act)
-gh act push -j quality
-gh act push -j performance
+how test  # Built-in self-test (runs A/B comparison against installed binary)
+python3 tests/test_vv_suite.py  # Native V&V benchmark suite (<1s)
+docker run --rm $(docker build -q -f Dockerfile.test .)  # Clean container audit
 ```
 
 ---
