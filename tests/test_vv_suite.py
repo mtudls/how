@@ -161,7 +161,44 @@ def test_behavior_and_edge_cases():
     print("  ✓ Feedback safety filter rejects injections (referring to @mtulds) and routes safe feedback.")
     scores.append(100)
 
-    # 3.4 CLI flag error handling (e.g. missing retention argument)
+    # 3.4 Configuration lifecycle test (verbosity, model, retention, auth status, custom config dir)
+    tmp_cfg_dir = tempfile.mkdtemp(prefix="how_test_cfg_")
+    env_cfg = {
+        "HOW_CONFIG_DIR": tmp_cfg_dir,
+        "HOW_CACHE_DIR": tmp_cfg_dir,
+        "GROQ_API_KEY": "gsk_test_mock_key"
+    }
+    try:
+        # Test verbosity set non-interactively
+        code, out, err, dur = run_how(["verbosity", "zero"], env_override=env_cfg)
+        assert code == 0, f"verbosity set failed: {err}"
+        assert "zero" in out.lower()
+
+        # Verify saved to config.json
+        cfg_file = os.path.join(tmp_cfg_dir, "config.json")
+        assert os.path.exists(cfg_file), "config.json must be created"
+        with open(cfg_file) as f:
+            saved_cfg = json.load(f)
+        assert saved_cfg.get("verbosity") == "zero"
+
+        # Test auth status
+        code, out, err, dur = run_how(["auth", "status"], env_override=env_cfg)
+        assert code == 0, f"auth status failed: {err}"
+        assert "gsk_test_mock_key" in out or "environment" in out.lower() or "active" in out.lower()
+
+        # Test cache retention configuration
+        code, out, err, dur = run_how(["cache", "retention", "7D"], env_override=env_cfg)
+        assert code == 0, f"cache retention failed: {err}"
+        with open(cfg_file) as f:
+            saved_cfg = json.load(f)
+        assert saved_cfg.get("cache_retention_seconds") == 7 * 86400
+
+        print("  ✓ Configuration persistence (verbosity, auth, retention, custom dir) fully verified.")
+        scores.append(100)
+    finally:
+        shutil.rmtree(tmp_cfg_dir, ignore_errors=True)
+
+    # 3.5 CLI flag error handling (e.g. missing retention argument)
     code, out, err, dur = run_how(["--retention"])
     assert code != 0, "CLI must exit with non-zero on missing retention value"
     print("  ✓ Edge case: Missing flag parameters correctly rejected.")
