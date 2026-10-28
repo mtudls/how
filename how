@@ -196,7 +196,7 @@ def auth_login():
         print(f"{RED}✗ No API key provided.{RESET}\n")
         return
 
-    print(f"{DIM}Verifying API key...{RESET}", end="", flush=True)
+    print(f"{RED}Verifying API key...{RESET}", end="", flush=True)
     models, err = fetch_available_models(key)
     print("\r" + " " * 35 + "\r", end="")
 
@@ -1412,58 +1412,107 @@ def run_self_test(use_docker=False):
 
     # 1. Detect binaries: Installed (A) vs Current / WIP (B)
     current_bin = os.path.realpath(__file__)
-    # Find installed binary in PATH
     installed_bin = None
+    installed_content_bytes = None
+    installed_label = ""
+
     path_env = os.environ.get("PATH", "")
     for p in path_env.split(os.path.pathsep):
         cand = os.path.join(p, "how")
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            installed_bin = cand
+            # If it's a symlink directly pointing to this WIP file, installed is same inode.
+            # In that case, compare against the last committed git version (HEAD)
+            if os.path.realpath(cand) == current_bin:
+                try:
+                    res = subprocess.run(
+                        ["git", "-C", os.path.dirname(current_bin), "show", "HEAD:how"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        installed_content_bytes = res.stdout
+                        installed_bin = "git:HEAD"
+                        installed_label = "Committed (HEAD)"
+                except Exception:
+                    pass
+            else:
+                installed_bin = cand
+                installed_label = cand
             break
 
-    def get_file_sha256(path):
-        if not path or not os.path.isfile(path):
-            return ""
-        try:
-            with open(path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
-        except Exception:
-            return ""
+    def get_sha256(data_bytes):
+        return hashlib.sha256(data_bytes).hexdigest() if data_bytes else ""
 
-    current_hash = get_file_sha256(current_bin)
-    installed_hash = get_file_sha256(installed_bin) if installed_bin else ""
+    try:
+        with open(current_bin, "rb") as f:
+            current_bytes = f.read()
+    except Exception:
+        current_bytes = b""
+
+    current_hash = get_sha256(current_bytes)
+
+    if installed_bin == "git:HEAD" and installed_content_bytes is not None:
+        installed_hash = get_sha256(installed_content_bytes)
+    elif installed_bin and os.path.isfile(installed_bin):
+        try:
+            with open(installed_bin, "rb") as f:
+                installed_content_bytes = f.read()
+            installed_hash = get_sha256(installed_content_bytes)
+        except Exception:
+            installed_hash = ""
+    else:
+        installed_hash = ""
 
     # Measure binary performance and behavior score
-    def benchmark_target(bin_path):
-        latencies = []
-        for _ in range(5):
-            t0 = time.perf_counter()
-            res = subprocess.run(
-                [sys.executable, bin_path, "--help"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            latencies.append((time.perf_counter() - t0) * 1000)
-            if res.returncode != 0:
-                return None, 0
-        avg_lat = sum(latencies) / len(latencies)
-        score = max(0, min(100, 100 - (avg_lat - 30) * 0.7)) if avg_lat > 30 else 100
-        return avg_lat, score
+    def benchmark_target(bin_path, input_content=None):
+        import tempfile
+        tmp_script = None
+        target_exec = bin_path
+        if input_content is not None:
+            tmp_f = tempfile.NamedTemporaryFile("wb", delete=False)
+            tmp_f.write(input_content)
+            tmp_f.flush()
+            tmp_f.close()
+            os.chmod(tmp_f.name, 0o700)  # nosec B103
+            target_exec = tmp_f.name
+            tmp_script = tmp_f.name
+
+        try:
+            latencies = []
+            for _ in range(5):
+                t0 = time.perf_counter()
+                res = subprocess.run(
+                    [sys.executable, target_exec, "--help"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                latencies.append((time.perf_counter() - t0) * 1000)
+                if res.returncode != 0:
+                    return None, 0
+            avg_lat = sum(latencies) / len(latencies)
+            score = max(0, min(100, 100 - (avg_lat - 30) * 0.7)) if avg_lat > 30 else 100
+            return avg_lat, score
+        finally:
+            if tmp_script and os.path.exists(tmp_script):
+                try:
+                    os.remove(tmp_script)
+                except Exception:
+                    pass
 
     is_ab_mode = bool(installed_bin and (current_hash != installed_hash))
 
     print(f"\n{BOLD}{MAGENTA}◆ how self-test{RESET}")
 
     if is_ab_mode:
-        print(f"{DIM}Detected differences between installed version and local work-in-progress. Running A/B comparison...{RESET}\n")
-        print(f"  {BOLD}[A] Installed:{RESET}        {installed_bin} {DIM}(sha: {installed_hash[:8]}...){RESET}")
+        print(f"{DIM}Detected differences between baseline version and local work-in-progress. Running A/B comparison...{RESET}\n")
+        print(f"  {BOLD}[A] Baseline:{RESET}         {installed_label} {DIM}(sha: {installed_hash[:8]}...){RESET}")
         print(f"  {BOLD}[B] Work-in-progress:{RESET} {current_bin} {DIM}(sha: {current_hash[:8]}...){RESET}\n")
 
-        lat_a, score_a = benchmark_target(installed_bin)
+        lat_a, score_a = benchmark_target(installed_bin, input_content=installed_content_bytes if installed_bin == "git:HEAD" else None)
         lat_b, score_b = benchmark_target(current_bin)
 
-        print(f"  {'Metric':<25} {'[A] Installed':<18} {'[B] WIP (Current)':<18}")
+        print(f"  {'Metric':<25} {'[A] Baseline':<18} {'[B] WIP (Current)':<18}")
         print(f"  {'-'*65}")
         lat_diff = ((lat_a - lat_b) / lat_a) * 100 if lat_a else 0
         diff_str = f"({GREEN}▲ {abs(lat_diff):.1f}% faster{RESET})" if lat_diff > 0 else f"({YELLOW}▼ {abs(lat_diff):.1f}% slower{RESET})"
@@ -1471,11 +1520,27 @@ def run_self_test(use_docker=False):
         print(f"  {'Performance Score':<25} {f'{score_a:.1f}/100':<18} {f'{score_b:.1f}/100':<18}")
 
         # Check code quality (syntax, ruff/flake8 if available)
-        def check_syntax(path):
-            res = subprocess.run([sys.executable, "-m", "py_compile", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return res.returncode == 0
+        def check_syntax(path, content=None):
+            import tempfile
+            target = path
+            tmp_f = None
+            if content is not None:
+                tmp_f = tempfile.NamedTemporaryFile("wb", delete=False, suffix=".py")
+                tmp_f.write(content)
+                tmp_f.flush()
+                tmp_f.close()
+                target = tmp_f.name
+            try:
+                res = subprocess.run([sys.executable, "-m", "py_compile", target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                return res.returncode == 0
+            finally:
+                if tmp_f and os.path.exists(tmp_f.name):
+                    try:
+                        os.remove(tmp_f.name)
+                    except Exception:
+                        pass
 
-        syn_a = check_syntax(installed_bin)
+        syn_a = check_syntax(installed_bin, content=installed_content_bytes if installed_bin == "git:HEAD" else None)
         syn_b = check_syntax(current_bin)
         print(f"  {'Syntax / Compile':<25} {f'{GREEN}✓ Valid{RESET}' if syn_a else f'{RED}✗ Error{RESET}':<27} {f'{GREEN}✓ Valid{RESET}' if syn_b else f'{RED}✗ Error{RESET}':<27}")
 
