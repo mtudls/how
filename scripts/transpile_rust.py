@@ -579,11 +579,22 @@ def compile_rust_binary(py_path: str, out_path: str, emit_rs_path: str = None) -
         os.makedirs(os.path.dirname(out_abs), exist_ok=True)
         # Unlink target first in case it is a symlink to the Python source file!
         if os.path.islink(out_abs) or os.path.exists(out_abs):
-            if os.path.realpath(out_abs) != os.path.realpath(py_path) or os.path.islink(out_abs):
-                try:
-                    os.unlink(out_abs)
-                except Exception:
-                    pass
+            try:
+                os.unlink(out_abs)
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Cannot replace {out_abs}: {e}",
+                    "transpile_ms": transpile_ms,
+                    "compile_ms": compile_ms,
+                }
+        if os.path.realpath(out_abs) == os.path.realpath(py_path):
+            return {
+                "ok": False,
+                "error": "Refusing to overwrite readable Python source file in repo",
+                "transpile_ms": transpile_ms,
+                "compile_ms": compile_ms,
+            }
         shutil.move(tmp_out, out_abs)
         size_kb = os.path.getsize(out_abs) / 1024.0
         return {
