@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-# omarchy:summary=Ask Groq for fast Linux and Omarchy how-to commands
+# omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [--no-cache] [to] <query...> | model | auth | history | verbosity | cache
-# omarchy:examples=how to ping google | how -0 to ping google | how cache retention 3h
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--no-cache] [--no-context] [to] <query...> | context | triage | model | auth | cache | history | feedback | test
+# omarchy:examples=how to ping google | how -0 to find largest files | how -t to fix limine secure boot | how context
+# omarchy:aliases=howto
 """
-how - Ultra-fast AI CLI assistant powered by Groq for Omarchy & Linux developers.
-Zero external dependencies (uses standard library).
+how - Fast, concise, direct CLI tool to learn "how to do sht in ..."
+Built for Omarchy, Linux, and modern developer stacks.
+Zero external runtime dependencies (Python standard library only).
 """
 
-import sys
 import os
-import json
-import re
-import time
-import hashlib
-import sqlite3
+import sys
+
+__version__ = "0.3.0"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -23,27 +22,27 @@ CACHE_DIR = os.environ.get("HOW_CACHE_DIR") or os.path.join(
     os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "how"
 )
 CACHE_DB_FILE = os.path.join(CACHE_DIR, "cache.db")
+
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_KEYS_URL = "https://console.groq.com/keys"
 
-# Rekomendowany domyślny model
 DEFAULT_MODEL = "openai/gpt-oss-120b"
-
-# Domyślny poziom gadatliwości: 'normal' (dostępne: 'zero', 'low', 'normal')
+DEFAULT_TRIAGE_MODEL = "llama-3.1-8b-instant"
+DEFAULT_THINK_MODEL = "deepseek-r1-distill-llama-70b"
 DEFAULT_VERBOSITY = "normal"
-
-# Domyślny czas retencji pamięci podręcznej: 3 godziny (10800 sekund)
 DEFAULT_CACHE_RETENTION = 3 * 3600
 
-# Nagłówki HTTP (Cloudflare w Groq wymaga prawidłowego User-Agent)
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
-    "Accept": "application/json"
+    "Accept": "application/json",
 }
 
-# Kolory ANSI (poszanowanie NO_COLOR, braku TTY oraz TERM=dumb)
-USE_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+USE_COLOR = (
+    sys.stdout.isatty()
+    and not os.environ.get("NO_COLOR")
+    and os.environ.get("TERM") != "dumb"
+)
 RESET = "\033[0m" if USE_COLOR else ""
 BOLD = "\033[1m" if USE_COLOR else ""
 DIM = "\033[2m" if USE_COLOR else ""
@@ -53,14 +52,98 @@ YELLOW = "\033[33m" if USE_COLOR else ""
 RED = "\033[31m" if USE_COLOR else ""
 MAGENTA = "\033[35m" if USE_COLOR else ""
 
-def get_system_prompt(verbosity="normal"):
-    """Returns dedicated system prompt depending on verbosity mode (zero, low, normal)."""
-    base = """You are an ultra-fast, direct CLI 'how-to' assistant for Omarchy (an opinionated developer Linux distribution built on Arch Linux and Hyprland by DHH/Omacom).
-Take advantage of Omarchy-specific conventions: 'omarchy' CLI, 'yay' / 'pacman', Hyprland configs (~/.config/hypr, 'hyprctl'), Quickshell, systemctl, and standard modern developer tools (e.g. GitHub CLI 'gh auth switch' to switch accounts without logging out).
+
+def print_help():
+    help_text = f"""Usage:
+  {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--no-cache] [--no-context] <query...>
+  {CYAN}how{RESET} <command> [args...]
+
+Commands:
+  {CYAN}context{RESET} [on|off|os|stack]     Permission-gated OS, version & local stack discovery
+  {CYAN}triage{RESET} [on|off|<query...>]    Groq question triage & deep-thinking routing
+  {CYAN}auth{RESET} [login|status|logout]    Manage Groq API key
+  {CYAN}model{RESET} [check|think]           Select and test fast & deep-thinking models
+  {CYAN}cache{RESET} [retention|clear]       Response cache and retention (m, h, D, M)
+  {CYAN}verbosity{RESET} [zero|low|normal]   Default output verbosity
+  {CYAN}history{RESET} [filter]              Recent command suggestions
+  {CYAN}bash-history{RESET} [on|off|status]  Toggle saving suggestions to ~/.bash_history
+  {CYAN}feedback{RESET} [--yes] [text...]    Send quick feedback directly from terminal
+  {CYAN}version{RESET}                       Show version
+  {CYAN}test{RESET} [--docker|--stats]       Run self-test & A/B benchmark matrix
+
+Options:
+  {GREEN}-0, --zero{RESET}                    Command only (no explanation)
+  {GREEN}--low{RESET}                         Minimal 1-sentence explanation
+  {GREEN}-t, --think, --deep{RESET}           Force slower, deeper reasoning model
+  {GREEN}--fast{RESET}                        Force instant Groq execution (bypass triage)
+  {GREEN}--context / --no-context{RESET}      Force or bypass OS & local stack discovery
+  {GREEN}--no-cache{RESET}                    Bypass response cache
+  {GREEN}--retention <time>{RESET}            Temporary cache retention (e.g. 30m, 3h, 7D, 1M)
+  {GREEN}-y, --yes{RESET}                     Skip confirmation prompt (e.g. feedback)
+  {GREEN}-V, --version{RESET}                 Show version
+  {GREEN}--feedback, --bug{RESET}             Quick feedback link for the current query
+"""  # nosec B608
+    print(help_text)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2 or (len(sys.argv) == 2 and sys.argv[1].lower() in ("--help", "-h", "help")):
+        print_help()
+        sys.exit(0)
+    if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V", "version"):
+        print(f"how {__version__}")
+        sys.exit(0)
+
+
+
+def strip_control_sequences(text: str) -> str:
+    """
+    Strips ANSI / terminal control escape sequences and C0 control characters
+    from text, preserving newlines (\\n) and tabs (\\t).
+    """
+    if not text:
+        return ""
+    import re
+    text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
+    text = re.sub(r"\x1b\[[0-9:;<=>?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"\x1b[@-Z\\-_]", "", text)
+    text = text.replace("\x1b", "")
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+    return text
+
+
+def strip_think_blocks(text: str) -> str:
+    """Removes internal chain-of-thought <think>...</think> blocks emitted by reasoning models."""
+    if not text or "<think>" not in text:
+        return text
+    import re
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if "<think>" in cleaned:
+        cleaned = cleaned.split("</think>")[-1].strip()
+    return cleaned or text.strip()
+
+
+def get_system_prompt(verbosity="normal", deep_mode=False, env_context=""):
+    """Returns the dedicated system prompt for the requested verbosity mode (zero, low, normal)."""
+    base = """You are `how`, an ultra-fast, direct CLI assistant that teaches the user "how to do sht in ..." their exact OS, terminal, and project stack.
+Take advantage of Omarchy & Linux conventions when relevant:
+- Omarchy CLI: `omarchy` (`omarchy update`, `omarchy theme list|set <name>`, `omarchy font list|set`, `omarchy audio`, `omarchy brightness`, `omarchy bluetooth`, `omarchy battery`, `omarchy capture screenshot|screenrecording|qr`, `omarchy plugin add <repo-url> --enable`, `omarchy pkg add <pkg>`, `omarchy commands --all`).
+- Hyprland & Desktop: `Super + Space` (launcher), `Super + K` (live keybindings menu), `Super + Shift + C` (reload config), user bindings in `~/.config/hypr/bindings.conf` (or `bindings.lua`), syntax check via `hyprctl configerrors`, screenshot/recording dir overrides in `~/.config/uwsm/env.d/`.
+- Common Omarchy & Arch fixes: password lockout reset via TTY (`Ctrl+Alt+F3`) and `faillock --reset --user $USER`; Limine Secure Boot via `limine enroll-config` before `sbctl` (never sign kernels manually); PipeWire audio switching via `omarchy-audio-output-switch` or `wpctl`; package management via `pacman` / `yay`; GitHub account switch via `gh auth switch`.
+- Stack awareness: When local project stack context is provided (e.g. uv, poetry, pnpm, bun, cargo, go, rails, docker), tailor commands directly to that tool (e.g. `uv run pytest`, `pnpm test`, `cargo test`, `bundle exec rails`).
 Answer concisely and directly in English (or in the language asked if the user explicitly asks in another language).
 
 CRITICAL RULE ON UNCERTAINTY:
 If you are not confident or not sure about the answer, command, or how to accomplish the task, do NOT invent or guess. You MUST answer strictly with: "I don't know"."""
+
+    if deep_mode:
+        base += """
+
+DEEP THINKING MODE:
+Carefully verify flags, edge cases, file paths, and system safety before answering. Even after deep analysis, keep your final output concise, direct, and immediately copy-pasteable."""
+
+    if env_context:
+        base += f"\n\nDiscovered User Environment & Stack:\n{env_context}"
 
     if verbosity == "zero":
         return base + """
@@ -71,7 +154,7 @@ Response Rules (STRICT ZERO VERBOSITY):
 3. If the user's question is purely conceptual or not an actionable command, answer in 1 very short direct sentence without extra text.
 4. If not sure: output only "I don't know"."""
 
-    elif verbosity == "low":
+    if verbosity == "low":
         return base + """
 
 Response Rules (LOW VERBOSITY):
@@ -80,8 +163,7 @@ Response Rules (LOW VERBOSITY):
 3. If the user's question is purely conceptual, answer in 1 concise sentence.
 4. If not sure: answer "I don't know"."""
 
-    else:  # normal
-        return base + """
+    return base + """
 
 Response Rules (NORMAL VERBOSITY):
 1. Provide the exact executable bash/terminal command(s) FIRST in a ```bash code block if the question is an actionable task.
@@ -90,8 +172,9 @@ Response Rules (NORMAL VERBOSITY):
 4. Be direct and avoid fluff (no 'Sure!', no 'Here is how to do it').
 5. If not sure: answer "I don't know."."""
 
+
 def open_url_in_browser(url):
-    """Automatycznie otwiera przeglądarkę użytkownika w tle (jeśli nie wyłączono przez HOW_NO_BROWSER / testy)."""
+    """Opens a URL in the user's browser in the background unless suppressed by test/CI env vars."""
     if os.environ.get("HOW_NO_BROWSER") or os.environ.get("CI") or os.environ.get("TESTING"):
         return True
     import subprocess
@@ -107,19 +190,23 @@ def open_url_in_browser(url):
     except Exception:
         return False
 
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
+        import json
         try:
-            with open(CONFIG_FILE, "r") as f:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
     return {}
 
+
 def save_config(data):
+    import json
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         try:
             os.chmod(CONFIG_FILE, 0o600)
@@ -127,6 +214,790 @@ def save_config(data):
             pass
     except Exception as e:
         print(f"{YELLOW}! Could not save configuration to {CONFIG_FILE}: {e}{RESET}")
+
+
+# -----------------------------------------------------------------------------
+# Environment & Project Stack Discovery (with User Permission)
+# -----------------------------------------------------------------------------
+
+def detect_os_profile() -> dict:
+    """
+    Discovers OS name, version, kernel, desktop/WM, shell, and package managers
+    using fast, read-only local checks without spawning subprocesses.
+    """
+    import shutil
+    profile = {
+        "os_name": sys.platform,
+        "os_version": "",
+        "omarchy": False,
+        "kernel": "",
+        "desktop": "",
+        "shell": "",
+        "pkg_managers": [],
+    }
+
+    try:
+        u = os.uname()
+        profile["kernel"] = u.release
+    except Exception:
+        pass
+
+    os_release_paths = ("/etc/os-release", "/usr/lib/os-release")
+    for p in os_release_paths:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    data = {}
+                    for line in f:
+                        line = line.strip()
+                        if "=" in line and not line.startswith("#"):
+                            k, v = line.split("=", 1)
+                            data[k] = v.strip().strip('"').strip("'")
+                    profile["os_name"] = data.get("PRETTY_NAME") or data.get("NAME") or profile["os_name"]
+                    profile["os_version"] = data.get("VERSION_ID") or data.get("BUILD_ID") or ""
+                break
+            except Exception:
+                pass
+
+    if shutil.which("omarchy") or os.path.isdir("/usr/share/omarchy"):
+        profile["omarchy"] = True
+
+    desktop_parts = []
+    xdg_desktop = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION") or ""
+    if xdg_desktop:
+        desktop_parts.append(xdg_desktop)
+    elif os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        desktop_parts.append("Hyprland")
+    session_type = os.environ.get("XDG_SESSION_TYPE") or ("wayland" if os.environ.get("WAYLAND_DISPLAY") else "")
+    if session_type and session_type.lower() not in " ".join(desktop_parts).lower():
+        desktop_parts.append(session_type)
+    profile["desktop"] = " / ".join(desktop_parts)
+
+    shell_env = os.environ.get("SHELL") or ""
+    if shell_env:
+        profile["shell"] = os.path.basename(shell_env)
+
+    pkgs = []
+    for pm in ("pacman", "yay", "paru", "apt", "dnf", "apk", "zypper", "brew", "nix"):
+        if shutil.which(pm):
+            pkgs.append(pm)
+    profile["pkg_managers"] = pkgs
+
+    parts = []
+    os_label = profile["os_name"]
+    if profile["os_version"] and profile["os_version"] not in os_label:
+        os_label += f" {profile['os_version']}"
+    if profile["omarchy"] and "omarchy" not in os_label.lower():
+        os_label += " (Omarchy)"
+    parts.append(f"OS: {os_label}")
+    if profile["kernel"]:
+        parts.append(f"Kernel: {profile['kernel']}")
+    if profile["desktop"]:
+        parts.append(f"Desktop: {profile['desktop']}")
+    if profile["shell"]:
+        parts.append(f"Shell: {profile['shell']}")
+    if profile["pkg_managers"]:
+        parts.append(f"Pkg: {', '.join(profile['pkg_managers'])}")
+
+    profile["summary"] = " | ".join(parts)
+    return profile
+
+
+def detect_local_stack(cwd=None) -> dict:
+    """
+    Detects the software stack and tools used in the given directory (default: os.getcwd()).
+    Inspects only safe project manifest filenames and lightweight metadata (never .env or secrets).
+    """
+    import json
+    target_dir = os.path.abspath(cwd or os.getcwd())
+    try:
+        entries = set(os.listdir(target_dir))
+    except Exception:
+        return {"dir": os.path.basename(target_dir), "tools": [], "summary": ""}
+
+    tools = []
+    details = []
+
+    # Python stack
+    if "uv.lock" in entries:
+        tools.append("Python (uv)")
+    elif "poetry.lock" in entries:
+        tools.append("Python (poetry)")
+    elif "Pipfile" in entries:
+        tools.append("Python (pipenv)")
+    elif "pyproject.toml" in entries or "requirements.txt" in entries or "setup.py" in entries:
+        tools.append("Python")
+
+    if "manage.py" in entries:
+        details.append("Django")
+    if ".ruff.toml" in entries or "ruff.toml" in entries:
+        details.append("ruff")
+    if "pytest.ini" in entries or "conftest.py" in entries:
+        details.append("pytest")
+
+    # Node / JS / TS stack
+    if "bun.lockb" in entries or "bun.lock" in entries:
+        tools.append("Bun")
+    elif "pnpm-lock.yaml" in entries:
+        tools.append("Node.js (pnpm)")
+    elif "yarn.lock" in entries:
+        tools.append("Node.js (yarn)")
+    elif "package-lock.json" in entries:
+        tools.append("Node.js (npm)")
+    elif "package.json" in entries:
+        tools.append("Node.js")
+
+    if "deno.json" in entries or "deno.jsonc" in entries:
+        tools.append("Deno")
+    if "tsconfig.json" in entries:
+        details.append("TypeScript")
+
+    if "package.json" in entries:
+        pkg_path = os.path.join(target_dir, "package.json")
+        try:
+            if os.path.getsize(pkg_path) <= 65536:
+                with open(pkg_path, "r", encoding="utf-8", errors="ignore") as f:
+                    pkg = json.load(f)
+                deps = {}
+                deps.update(pkg.get("dependencies") or {})
+                deps.update(pkg.get("devDependencies") or {})
+                for fw, label in (
+                    ("next", "Next.js"),
+                    ("vite", "Vite"),
+                    ("astro", "Astro"),
+                    ("svelte", "Svelte"),
+                    ("react", "React"),
+                    ("vue", "Vue"),
+                    ("tailwindcss", "Tailwind"),
+                ):
+                    if fw in deps and label not in details:
+                        details.append(label)
+                scripts = list((pkg.get("scripts") or {}).keys())[:6]
+                if scripts:
+                    details.append(f"scripts: {','.join(scripts)}")
+        except Exception:
+            pass
+
+    # Rust, Go, Ruby, Elixir, Zig, C/C++, Nix, Arch
+    if "Cargo.toml" in entries:
+        tools.append("Rust (cargo)")
+    if "go.mod" in entries:
+        tools.append("Go (go)")
+    if "Gemfile" in entries:
+        if os.path.exists(os.path.join(target_dir, "bin", "rails")):
+            tools.append("Ruby on Rails (bundle exec rails)")
+        else:
+            tools.append("Ruby (bundler)")
+    if "mix.exs" in entries:
+        tools.append("Elixir (mix)")
+    if "build.zig" in entries:
+        tools.append("Zig")
+    if "CMakeLists.txt" in entries:
+        tools.append("CMake")
+    if "flake.nix" in entries or "shell.nix" in entries:
+        tools.append("Nix")
+    if "PKGBUILD" in entries:
+        tools.append("Arch PKGBUILD (makepkg)")
+
+    # Containers & Task runners
+    if any(f in entries for f in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")):
+        tools.append("Docker Compose")
+    elif "Dockerfile" in entries or "Containerfile" in entries:
+        tools.append("Docker")
+
+    if "justfile" in entries or "Justfile" in entries:
+        details.append("just")
+    if "Makefile" in entries or "makefile" in entries:
+        details.append("make")
+    if "Taskfile.yml" in entries or "Taskfile.yaml" in entries:
+        details.append("task")
+    if ".git" in entries or os.path.isdir(os.path.join(target_dir, ".git")):
+        details.append("git")
+    if "manifest.json" in entries and "qml" in entries:
+        details.append("Omarchy QML Plugin")
+
+    dir_name = os.path.basename(target_dir) or target_dir
+    if not tools and not details:
+        return {"dir": dir_name, "tools": [], "details": [], "summary": ""}
+
+    summary_items = tools + [d for d in details if d not in tools]
+    summary = f"Project ({dir_name}): {', '.join(summary_items)}"
+    return {
+        "dir": dir_name,
+        "tools": tools,
+        "details": details,
+        "summary": summary,
+    }
+
+
+def ensure_context_permissions(cfg=None, interactive_allowed=True) -> dict:
+    """
+    Ensures user permission settings for OS/version discovery and local stack discovery exist.
+    Prompts once on first interactive run and caches the choices in config.json.
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    if "discover_os" in cfg and "discover_stack" in cfg:
+        return cfg
+
+    # Check environment variable overrides
+    env_ctx = os.environ.get("HOW_CONTEXT", "").strip().lower()
+    if env_ctx in ("0", "off", "false", "none", "no"):
+        cfg["discover_os"] = False
+        cfg["discover_stack"] = False
+        return cfg
+    if env_ctx in ("1", "on", "true", "yes", "all"):
+        cfg["discover_os"] = True
+        cfg["discover_stack"] = True
+        if not cfg.get("os_profile"):
+            cfg["os_profile"] = detect_os_profile()
+        return cfg
+
+    is_tty = (
+        interactive_allowed
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+        and not os.environ.get("CI")
+        and not os.environ.get("TESTING")
+        and not os.environ.get("HOW_NO_BROWSER")
+        and not os.environ.get("HOW_NO_PROMPT")
+    )
+
+    if not is_tty or cfg.get("context_prompted"):
+        cfg.setdefault("discover_os", False)
+        cfg.setdefault("discover_stack", False)
+        return cfg
+
+    print(f"\n{BOLD}{MAGENTA}◆ Environment & Stack Discovery Permission (One-Time Setup){RESET}")
+    print(f"{DIM}`how` can tailor commands to your exact OS/version and current project folder.{RESET}")
+    try:
+        ans_os = input(f"  {CYAN}1. Allow discovering OS, version & desktop environment? [Y/n]:{RESET} ").strip().lower()
+        allow_os = ans_os in ("", "y", "yes")
+        ans_stack = input(f"  {CYAN}2. Allow discovering project stack (Cargo, npm, uv, Docker...) in current dir? [Y/n]:{RESET} ").strip().lower()
+        allow_stack = ans_stack in ("", "y", "yes")
+    except (KeyboardInterrupt, EOFError):
+        print()
+        allow_os = False
+        allow_stack = False
+
+    cfg["discover_os"] = allow_os
+    cfg["discover_stack"] = allow_stack
+    cfg["context_prompted"] = True
+    if allow_os:
+        cfg["os_profile"] = detect_os_profile()
+    save_config(cfg)
+    status_os = f"{GREEN}on{RESET}" if allow_os else f"{DIM}off{RESET}"
+    status_st = f"{GREEN}on{RESET}" if allow_stack else f"{DIM}off{RESET}"
+    print(f"  {GREEN}✓ Saved preferences{RESET} (OS: {status_os}, Stack: {status_st} — change anytime via `{CYAN}how context{RESET}`).\n")
+    return cfg
+
+
+def get_active_environment_context(cfg=None, no_context=False, force_context=False, cwd=None) -> str:
+    """
+    Returns formatted OS + local stack context string according to granted user permissions.
+    Never reads or returns environment data without explicit permission or --context override.
+    """
+    if no_context or os.environ.get("HOW_NO_CONTEXT") in ("1", "true", "yes"):
+        return ""
+
+    if cfg is None:
+        cfg = load_config()
+
+    if not force_context:
+        cfg = ensure_context_permissions(cfg)
+
+    use_os = force_context or bool(cfg.get("discover_os", False))
+    use_stack = force_context or bool(cfg.get("discover_stack", False))
+
+    lines = []
+    if use_os:
+        os_prof = cfg.get("os_profile")
+        if not isinstance(os_prof, dict) or not os_prof.get("summary"):
+            os_prof = detect_os_profile()
+            if cfg.get("discover_os"):
+                cfg["os_profile"] = os_prof
+                save_config(cfg)
+        if os_prof.get("summary"):
+            lines.append(os_prof["summary"])
+
+    if use_stack:
+        stack_info = detect_local_stack(cwd=cwd)
+        if stack_info.get("summary"):
+            lines.append(stack_info["summary"])
+
+    return "\n".join(lines)
+
+
+def manage_context_command(args):
+    """Handles `how context [status|on|off|os|stack|refresh]` subcommand."""
+    cfg = load_config()
+    sub = args[0].lower() if args else "status"
+
+    if sub in ("on", "enable", "1", "true"):
+        cfg["discover_os"] = True
+        cfg["discover_stack"] = True
+        cfg["context_prompted"] = True
+        cfg["os_profile"] = detect_os_profile()
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Environment & stack discovery ENABLED.{RESET}")
+        print(f"  {DIM}{cfg['os_profile'].get('summary', '')}{RESET}\n")
+        return
+
+    if sub in ("off", "disable", "0", "false"):
+        cfg["discover_os"] = False
+        cfg["discover_stack"] = False
+        cfg["context_prompted"] = True
+        save_config(cfg)
+        print(f"\n{YELLOW}✓ Environment & stack discovery DISABLED.{RESET}\n")
+        return
+
+    if sub == "refresh":
+        cfg["os_profile"] = detect_os_profile()
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Refreshed OS profile:{RESET} {cfg['os_profile'].get('summary', '')}\n")
+        return
+
+    if sub == "os":
+        action = args[1].lower() if len(args) > 1 else "status"
+        if action in ("on", "enable", "1", "true"):
+            cfg["discover_os"] = True
+            cfg["context_prompted"] = True
+            cfg["os_profile"] = detect_os_profile()
+            save_config(cfg)
+            print(f"\n{GREEN}✓ OS discovery ENABLED:{RESET} {cfg['os_profile'].get('summary', '')}\n")
+        elif action in ("off", "disable", "0", "false"):
+            cfg["discover_os"] = False
+            cfg["context_prompted"] = True
+            save_config(cfg)
+            print(f"\n{YELLOW}✓ OS discovery DISABLED.{RESET}\n")
+        else:
+            st = f"{GREEN}enabled{RESET}" if cfg.get("discover_os") else f"{DIM}disabled{RESET}"
+            print(f"\n{BOLD}OS Discovery:{RESET} {st}\n")
+        return
+
+    if sub == "stack":
+        action = args[1].lower() if len(args) > 1 else "status"
+        if action in ("on", "enable", "1", "true"):
+            cfg["discover_stack"] = True
+            cfg["context_prompted"] = True
+            save_config(cfg)
+            st_info = detect_local_stack()
+            print(f"\n{GREEN}✓ Local stack discovery ENABLED.{RESET}")
+            if st_info.get("summary"):
+                print(f"  {DIM}{st_info['summary']}{RESET}")
+            print()
+        elif action in ("off", "disable", "0", "false"):
+            cfg["discover_stack"] = False
+            cfg["context_prompted"] = True
+            save_config(cfg)
+            print(f"\n{YELLOW}✓ Local stack discovery DISABLED.{RESET}\n")
+        else:
+            st = f"{GREEN}enabled{RESET}" if cfg.get("discover_stack") else f"{DIM}disabled{RESET}"
+            print(f"\n{BOLD}Stack Discovery:{RESET} {st}\n")
+        return
+
+    # Default: status
+    os_on = bool(cfg.get("discover_os", False))
+    stack_on = bool(cfg.get("discover_stack", False))
+    os_badge = f"{GREEN}enabled{RESET}" if os_on else f"{YELLOW}disabled{RESET}"
+    stack_badge = f"{GREEN}enabled{RESET}" if stack_on else f"{YELLOW}disabled{RESET}"
+
+    os_preview = cfg.get("os_profile", {}).get("summary") if os_on else "(permission not granted — run `how context os on`)"
+    if os_on and not os_preview:
+        os_preview = detect_os_profile().get("summary", "")
+
+    stack_preview = (
+        (detect_local_stack().get("summary") or "No specific stack markers in current directory")
+        if stack_on
+        else "(permission not granted — run `how context stack on`)"
+    )
+
+    print(f"\n{BOLD}{MAGENTA}◆ Environment & Stack Discovery Status{RESET}\n")
+    print(f"  OS Discovery:    {os_badge}")
+    print(f"    Profile:       {DIM}{os_preview}{RESET}")
+    print(f"  Stack Discovery: {stack_badge}")
+    print(f"    Current Dir:   {DIM}{stack_preview}{RESET}\n")
+    print(f"{BOLD}Context commands:{RESET}")
+    print(f"  {CYAN}how context on / off{RESET}        Enable or disable all context discovery")
+    print(f"  {CYAN}how context os on / off{RESET}     Toggle OS & version discovery")
+    print(f"  {CYAN}how context stack on / off{RESET}  Toggle current directory stack discovery")
+    print(f"  {CYAN}how context refresh{RESET}         Re-scan OS & desktop profile")
+    print(f"  {CYAN}how --no-context <query>{RESET}    Run single query without context\n")
+
+
+# -----------------------------------------------------------------------------
+# Two-Tier Intelligence: Groq Triage & Deep Thinking Mode
+# -----------------------------------------------------------------------------
+
+DEEP_QUERY_INDICATORS = (
+    "debug", "troubleshoot", "why is", "why does", "black screen", "boot loop",
+    "kernel panic", "secure boot", "deadlock", "race condition", "memory leak",
+    "segfault", "corrupted", "complex", "regex", "awk", "architecture",
+    "optimize", "refactor", "systemd service", "udev rule", "iptables", "nftables",
+)
+
+
+def heuristic_needs_deep_thinking(query: str) -> bool:
+    """Fast local pre-check for queries that strongly benefit from deep reasoning."""
+    q_low = query.lower().strip()
+    if len(q_low.split()) >= 16:
+        return True
+    return any(ind in q_low for ind in DEEP_QUERY_INDICATORS)
+
+
+def triage_query_with_groq(query: str, env_context: str = "", api_key: str = None, cfg: dict = None) -> dict:
+    """
+    Uses Groq's ultra-fast model to triage a user question into:
+      {"route": "fast" | "deep", "reason": "..."}
+    """
+    import json
+    import urllib.request
+
+    if cfg is None:
+        cfg = load_config()
+    if not api_key:
+        api_key = get_api_key()
+
+    # Short simple commands (< 6 words, no troubleshooting keywords) take the 0ms fast path
+    words = query.strip().split()
+    if len(words) <= 5 and not heuristic_needs_deep_thinking(query):
+        return {"route": "fast", "reason": "direct short command query", "source": "fast-path"}
+
+    if not api_key:
+        route = "deep" if heuristic_needs_deep_thinking(query) else "fast"
+        return {"route": route, "reason": "local heuristic (no Groq key)", "source": "heuristic"}
+
+    triage_model = cfg.get("triage_model", DEFAULT_TRIAGE_MODEL)
+    sys_msg = (
+        "You are a fast query router for a Linux/Omarchy CLI assistant. "
+        "Classify the user's query as either FAST (standard command lookup, flags, simple how-to) "
+        "or DEEP (complex debugging, multi-step system troubleshooting, bootloader/kernel/hardware failure, "
+        "intricate scripting/regex, or subtle architectural problem). "
+        "Reply ONLY with valid JSON: {\"route\": \"fast\" or \"deep\", \"reason\": \"<5 words>\"}"
+    )
+    user_msg = f"Query: {query}"
+    if env_context:
+        user_msg += f"\nContext: {env_context}"
+
+    payload = {
+        "model": triage_model,
+        "messages": [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 35,
+    }
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(
+        GROQ_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data["choices"][0]["message"].get("content", "").strip()
+                # Extract JSON object if wrapped
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    parsed = json.loads(content[start : end + 1])
+                    route = str(parsed.get("route", "fast")).lower()
+                    if route in ("fast", "deep"):
+                        return {
+                            "route": route,
+                            "reason": str(parsed.get("reason", "groq triage")),
+                            "source": f"groq:{triage_model}",
+                        }
+                if "deep" in content.lower():
+                    return {"route": "deep", "reason": "groq triage classification", "source": f"groq:{triage_model}"}
+                return {"route": "fast", "reason": "groq triage classification", "source": f"groq:{triage_model}"}
+    except Exception:
+        pass
+
+    route = "deep" if heuristic_needs_deep_thinking(query) else "fast"
+    return {"route": route, "reason": "heuristic fallback", "source": "heuristic"}
+
+
+def resolve_deep_provider(cfg=None) -> tuple[str, str, str]:
+    """
+    Resolves the best available Deep Thinking provider and model:
+    Returns (provider, model_name, api_key_or_cmd).
+    Priority:
+    1. Explicit `think_model` in config or `HOW_THINK_MODEL` env var (e.g. `gemini:gemini-2.5-pro`, `anthropic:claude-3-7-sonnet-latest`, `openai:o3-mini`, `groq:deepseek-r1-distill-llama-70b`, `cli:claude`).
+    2. External reasoning API keys if present in environment (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`).
+    3. Default Groq reasoning model (`deepseek-r1-distill-llama-70b` / `qwen-qwq-32b` / `openai/gpt-oss-120b`).
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    configured = os.environ.get("HOW_THINK_MODEL") or cfg.get("think_model") or ""
+    if configured:
+        if ":" in configured:
+            prov, mod = configured.split(":", 1)
+            prov = prov.lower().strip()
+            mod = mod.strip()
+            if prov == "gemini":
+                return "gemini", mod, os.environ.get("GEMINI_API_KEY") or cfg.get("gemini_api_key", "")
+            if prov == "anthropic":
+                return "anthropic", mod, os.environ.get("ANTHROPIC_API_KEY") or cfg.get("anthropic_api_key", "")
+            if prov == "openai":
+                return "openai", mod, os.environ.get("OPENAI_API_KEY") or cfg.get("openai_api_key", "")
+            if prov == "openrouter":
+                return "openrouter", mod, os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key", "")
+            if prov == "cli":
+                return "cli", mod, mod
+            if prov == "groq":
+                return "groq", mod, get_api_key() or ""
+        return "groq", configured, get_api_key() or ""
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or cfg.get("gemini_api_key", "").strip()
+    if gemini_key:
+        return "gemini", "gemini-2.5-flash", gemini_key
+
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or cfg.get("anthropic_api_key", "").strip()
+    if anthropic_key:
+        return "anthropic", "claude-3-7-sonnet-latest", anthropic_key
+
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip() or cfg.get("openai_api_key", "").strip()
+    if openai_key:
+        return "openai", "o3-mini", openai_key
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip() or cfg.get("openrouter_api_key", "").strip()
+    if openrouter_key:
+        return "openrouter", "deepseek/deepseek-r1", openrouter_key
+
+    return "groq", DEFAULT_THINK_MODEL, get_api_key() or ""
+
+
+def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal", cfg: dict = None) -> tuple[str, str]:
+    """
+    Executes query using the Deep Thinking tier (external provider, CLI agent, or Groq reasoning model).
+    Returns (cleaned_response_text, model_label).
+    """
+    import json
+    import urllib.request
+
+    if cfg is None:
+        cfg = load_config()
+
+    provider, model_name, credential = resolve_deep_provider(cfg)
+
+    if provider == "gemini" and credential:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={credential}"
+        payload = {
+            "contents": [
+                {"role": "user", "parts": [{"text": sys_prompt + "\n\nUser request:\n" + user_prompt}]}
+            ],
+            "generationConfig": {"temperature": 0.1},
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**COMMON_HEADERS, "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw = data["candidates"][0]["content"]["parts"][0]["text"]
+                clean = strip_think_blocks(strip_control_sequences(raw))
+                if verbosity != "zero":
+                    print(clean + f"{RESET}\n")
+                return clean, f"gemini:{model_name}"
+        except Exception:
+            pass
+
+    if provider == "anthropic" and credential:
+        url = "https://api.anthropic.com/v1/messages"
+        payload = {
+            "model": model_name,
+            "max_tokens": 1024,
+            "system": sys_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                **COMMON_HEADERS,
+                "x-api-key": credential,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                blocks = data.get("content", [])
+                texts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+                clean = strip_think_blocks(strip_control_sequences("\n".join(texts)))
+                if verbosity != "zero":
+                    print(clean + f"{RESET}\n")
+                return clean, f"anthropic:{model_name}"
+        except Exception:
+            pass
+
+    if provider in ("openai", "openrouter") and credential:
+        url = (
+            "https://api.openai.com/v1/chat/completions"
+            if provider == "openai"
+            else "https://openrouter.ai/api/v1/chat/completions"
+        )
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                **COMMON_HEADERS,
+                "Authorization": f"Bearer {credential}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw = data["choices"][0]["message"].get("content", "")
+                clean = strip_think_blocks(strip_control_sequences(raw))
+                if verbosity != "zero":
+                    print(clean + f"{RESET}\n")
+                return clean, f"{provider}:{model_name}"
+        except Exception:
+            pass
+
+    if provider == "cli" and credential:
+        import shutil
+        import subprocess
+        bin_name = credential.split()[0]
+        if shutil.which(bin_name):
+            try:
+                proc = subprocess.run(
+                    [bin_name, "-p", f"{sys_prompt}\n\n{user_prompt}"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=45,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    clean = strip_think_blocks(strip_control_sequences(proc.stdout.strip()))
+                    if verbosity != "zero":
+                        print(clean + f"{RESET}\n")
+                    return clean, f"cli:{bin_name}"
+            except Exception:
+                pass
+
+    # Default / Fallback: Groq Deep Reasoning Pool
+    groq_key = get_api_key()
+    if not groq_key:
+        return "", "none"
+
+    deep_pool = []
+    if provider == "groq" and model_name:
+        deep_pool.append(model_name)
+    for m in (DEFAULT_THINK_MODEL, "qwen-qwq-32b", "openai/gpt-oss-120b"):
+        if m not in deep_pool:
+            deep_pool.append(m)
+
+    for cand_model in deep_pool:
+        payload = {
+            "model": cand_model,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "temperature": 0.1,
+        }
+        req = urllib.request.Request(
+            GROQ_API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                **COMMON_HEADERS,
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw = data["choices"][0]["message"].get("content", "")
+                    clean = strip_think_blocks(strip_control_sequences(raw))
+                    if verbosity != "zero":
+                        print(clean + f"{RESET}\n")
+                    return clean, cand_model
+        except Exception:
+            continue
+
+    return "", "none"
+
+
+def manage_triage_command(args):
+    """Handles `how triage [on|off|status|<query...>]` subcommand."""
+    cfg = load_config()
+    if not args:
+        sub = "status"
+    else:
+        sub = args[0].lower()
+
+    if sub in ("on", "enable", "1", "true") and len(args) == 1:
+        cfg["triage"] = True
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Automatic Groq question triage ENABLED.{RESET}\n")
+        return
+
+    if sub in ("off", "disable", "0", "false") and len(args) == 1:
+        cfg["triage"] = False
+        save_config(cfg)
+        print(f"\n{YELLOW}✓ Automatic Groq question triage DISABLED (all queries use default fast tier unless -t/--think is passed).{RESET}\n")
+        return
+
+    if sub in ("status", "info") and len(args) == 1:
+        enabled = cfg.get("triage", True)
+        status_str = f"{GREEN}enabled{RESET}" if enabled else f"{YELLOW}disabled{RESET}"
+        t_model = cfg.get("triage_model", DEFAULT_TRIAGE_MODEL)
+        prov, d_model, _ = resolve_deep_provider(cfg)
+        print(f"\n{BOLD}{MAGENTA}◆ Groq Question Triage & Deep Thinking Status{RESET}\n")
+        print(f"  Auto-Triage:  {status_str}")
+        print(f"  Triage Model: {BOLD}{t_model}{RESET} (Groq fast classifier)")
+        print(f"  Fast Model:   {BOLD}{cfg.get('model', DEFAULT_MODEL)}{RESET}")
+        print(f"  Deep Model:   {BOLD}{CYAN}{prov}:{d_model}{RESET}\n")
+        print(f"{BOLD}Triage & Thinking commands:{RESET}")
+        print(f"  {CYAN}how triage on / off{RESET}          Enable or disable auto-triage")
+        print(f"  {CYAN}how triage <query...>{RESET}        Test how Groq triages a specific question")
+        print(f"  {CYAN}how -t / --think <query>{RESET}     Force deep thinking mode")
+        print(f"  {CYAN}how --fast <query>{RESET}           Force fast Groq mode")
+        print(f"  {CYAN}how model think <model>{RESET}      Set deep thinking model (e.g. gemini:gemini-2.5-pro)\n")
+        return
+
+    # Otherwise: dry-run triage classification on the provided query
+    test_q = " ".join(args)
+    env_ctx = get_active_environment_context(cfg, no_context=False)
+    res = triage_query_with_groq(test_q, env_context=env_ctx, cfg=cfg)
+    route = res.get("route", "fast")
+    badge = f"{MAGENTA}{BOLD}DEEP THINKING{RESET}" if route == "deep" else f"{GREEN}{BOLD}FAST DIRECT{RESET}"
+    print(f"\n{BOLD}Triage Result for:{RESET} \"{test_q}\"")
+    print(f"  Route:  {badge}")
+    print(f"  Reason: {DIM}{res.get('reason', '-')}{RESET}")
+    print(f"  Source: {DIM}{res.get('source', '-')}{RESET}\n")
+
+
+# -----------------------------------------------------------------------------
+# Authentication (login / status / logout)
+# -----------------------------------------------------------------------------
 
 def get_api_key():
     """Returns API key from GROQ_API_KEY environment variable or config.json."""
@@ -136,30 +1007,36 @@ def get_api_key():
     cfg = load_config()
     return cfg.get("api_key", "").strip() or None
 
+
+def require_api_key(message="! Please log in first."):
+    """Ensures an API key is available. Prompts for login if missing."""
+    key = get_api_key()
+    if not key:
+        print(f"{YELLOW}{message}{RESET}")
+        auth_login()
+        key = get_api_key()
+    return key
+
+
 def fetch_available_models(api_key):
-    """Fetches list of active chat models directly from Groq API."""
-    import urllib.request
+    """Fetches active chat models directly from the Groq API."""
+    import json
     import urllib.error
-    headers = {
-        **COMMON_HEADERS,
-        "Authorization": f"Bearer {api_key}"
-    }
+    import urllib.request
+
+    headers = {**COMMON_HEADERS, "Authorization": f"Bearer {api_key}"}
     req = urllib.request.Request(GROQ_MODELS_URL, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             if res.status == 200:
                 data = json.loads(res.read().decode("utf-8"))
                 models = data.get("data", [])
-
-                # Filter out non-chat models (e.g. whisper, guard rails)
                 exclude_keywords = ["whisper", "guard", "safeguard", "orpheus-arabic"]
-                chat_models = []
-                for m in models:
-                    mid = m.get("id", "")
-                    if not any(k in mid.lower() for k in exclude_keywords):
-                        chat_models.append(mid)
-
-                # Sort: 120b first, then alphabetically
+                chat_models = [
+                    m.get("id", "")
+                    for m in models
+                    if m.get("id") and not any(k in m.get("id", "").lower() for k in exclude_keywords)
+                ]
                 chat_models.sort(key=lambda x: (0 if "120b" in x else 1, x))
                 return chat_models, None
     except urllib.error.HTTPError as e:
@@ -168,19 +1045,16 @@ def fetch_available_models(api_key):
         return [], str(e)
     return [], "Unknown error"
 
-# -----------------------------------------------------------------------------
-# Auth handling (login / status / logout)
-# -----------------------------------------------------------------------------
 
 def auth_login():
-    """Simple login with Groq API key."""
+    """Interactive login flow with Groq API key verification."""
     print(f"\n{BOLD}{MAGENTA}◆ Groq API Authentication (Omarchy Helper){RESET}\n")
     print("Get your free API key at:")
     print(f"  {CYAN}{GROQ_KEYS_URL}{RESET}\n")
 
     try:
         ans = input(f"{DIM}Open page in browser? [Y/n]: {RESET}").strip().lower()
-        if ans in ("", "y", "yes", "t", "tak"):
+        if ans in ("", "y", "yes"):
             open_url_in_browser(GROQ_KEYS_URL)
     except (KeyboardInterrupt, EOFError):
         print(f"\n{YELLOW}Cancelled.{RESET}\n")
@@ -196,8 +1070,8 @@ def auth_login():
         print(f"{RED}✗ No API key provided.{RESET}\n")
         return
 
-    print(f"{RED}Verifying API key...{RESET}", end="", flush=True)
-    models, err = fetch_available_models(key)
+    print(f"{DIM}Verifying API key...{RESET}", end="", flush=True)
+    _, err = fetch_available_models(key)
     print("\r" + " " * 35 + "\r", end="")
 
     if err:
@@ -210,8 +1084,9 @@ def auth_login():
     save_config(cfg)
     print(f"{GREEN}✓ Logged in successfully!{RESET} Key saved in: {DIM}{CONFIG_FILE}{RESET}\n")
 
+
 def auth_status():
-    """Displays current authentication status."""
+    """Displays current authentication and configuration status."""
     key = get_api_key()
     if not key:
         print(f"\n{YELLOW}! No active Groq API key.{RESET}")
@@ -222,18 +1097,20 @@ def auth_status():
     source = "GROQ_API_KEY environment variable" if os.environ.get("GROQ_API_KEY") else CONFIG_FILE
     cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
+    prov, think_mod, _ = resolve_deep_provider(cfg)
     verb = cfg.get("verbosity", DEFAULT_VERBOSITY)
-    retention_sec = get_effective_retention()
-    ret_str = format_retention(retention_sec)
+    ret_str = format_retention(get_effective_retention())
 
     print(f"\n{GREEN}✓ Authenticated with Groq API{RESET}")
-    print(f"  Key:       {CYAN}{masked}{RESET} {DIM}(source: {source}){RESET}")
-    print(f"  Model:     {BOLD}{model}{RESET}")
-    print(f"  Verbosity: {BOLD}{verb}{RESET}")
-    print(f"  Cache:     {BOLD}{ret_str}{RESET}\n")
+    print(f"  Key:        {CYAN}{masked}{RESET} {DIM}(source: {source}){RESET}")
+    print(f"  Fast Model: {BOLD}{model}{RESET}")
+    print(f"  Deep Model: {BOLD}{prov}:{think_mod}{RESET}")
+    print(f"  Verbosity:  {BOLD}{verb}{RESET}")
+    print(f"  Cache:      {BOLD}{ret_str}{RESET}\n")
+
 
 def auth_logout():
-    """Logs out by removing API key from config."""
+    """Removes stored API key from config.json."""
     cfg = load_config()
     if cfg.get("api_key"):
         cfg.pop("api_key", None)
@@ -242,21 +1119,21 @@ def auth_logout():
     else:
         print(f"\n{DIM}No saved key in {CONFIG_FILE}.{RESET}\n")
 
+
 # -----------------------------------------------------------------------------
-# Model & verbosity management
+# Model & Verbosity Management
 # -----------------------------------------------------------------------------
 
 def check_all_models():
-    """Tests availability of all models with a micro-query."""
-    import urllib.request
+    """Tests availability and latency of all models in the user's Groq account."""
+    import json
+    import time
     import urllib.error
-    api_key = get_api_key()
+    import urllib.request
+
+    api_key = require_api_key()
     if not api_key:
-        print(f"{YELLOW}! Please log in first.{RESET}")
-        auth_login()
-        api_key = get_api_key()
-        if not api_key:
-            return
+        return
 
     print(f"\n{BOLD}{MAGENTA}◆ Testing model availability in your Groq account...{RESET}\n")
     print(f"{DIM}Fetching model list...{RESET}", end="", flush=True)
@@ -272,7 +1149,7 @@ def check_all_models():
     headers = {
         **COMMON_HEADERS,
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
     for m in models:
@@ -280,7 +1157,7 @@ def check_all_models():
         payload = json.dumps({
             "model": m,
             "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 1
+            "max_tokens": 1,
         }).encode("utf-8")
         req = urllib.request.Request(GROQ_API_URL, data=payload, headers=headers)
         t0 = time.time()
@@ -312,15 +1189,12 @@ def check_all_models():
     save_config(cfg)
     print(f"\n{GREEN}✓ Model check completed.{RESET}\n")
 
+
 def select_model_interactive(direct_choice=None):
-    """Selects active Groq model."""
-    api_key = get_api_key()
+    """Selects active Groq model interactively or via direct argument."""
+    api_key = require_api_key()
     if not api_key:
-        print(f"{YELLOW}! Please log in first.{RESET}")
-        auth_login()
-        api_key = get_api_key()
-        if not api_key:
-            return
+        return
 
     cfg = load_config()
     current_model = cfg.get("model", DEFAULT_MODEL)
@@ -337,7 +1211,6 @@ def select_model_interactive(direct_choice=None):
         if direct_choice.lower() == "check":
             check_all_models()
             return
-
         if direct_choice.isdigit():
             idx = int(direct_choice) - 1
             if 0 <= idx < len(models):
@@ -354,13 +1227,11 @@ def select_model_interactive(direct_choice=None):
         return
 
     tested = cfg.get("tested_models", {})
-
     print(f"\n{BOLD}{MAGENTA}◆ Available models in your Groq account:{RESET}\n")
     for i, m in enumerate(models, 1):
-        is_active = (m == current_model)
+        is_active = m == current_model
         star = f"{GREEN}* {RESET}" if is_active else "  "
         m_name = f"{BOLD}{CYAN}{m:<35}{RESET}" if is_active else f"{m:<35}"
-
         status_str = ""
         if m in tested:
             if tested[m].get("ok"):
@@ -368,7 +1239,6 @@ def select_model_interactive(direct_choice=None):
                 status_str = f" {GREEN}✓{RESET} {DIM}({ms}ms){RESET}"
             else:
                 status_str = f" {RED}✗{RESET} {DIM}(unavailable){RESET}"
-
         print(f"{star}[{i:2d}] {m_name}{status_str}")
 
     print(f"\n{DIM}[Enter number 1-{len(models)}, type 'check' to test, or Ctrl+C to cancel]{RESET}")
@@ -398,6 +1268,7 @@ def select_model_interactive(direct_choice=None):
     else:
         print(f"\n{DIM}Kept current model: {current_model}{RESET}\n")
 
+
 def set_verbosity_interactive(new_level=None):
     """Sets default verbosity mode (zero, low, normal)."""
     cfg = load_config()
@@ -414,7 +1285,7 @@ def set_verbosity_interactive(new_level=None):
         else:
             print(f"{RED}✗ Invalid verbosity level: '{new_level}'{RESET}")
             print(f"{DIM}Allowed: zero (command only), low (minimal description), normal (standard){RESET}\n")
-            return
+            sys.exit(2)
         cfg["verbosity"] = lvl
         save_config(cfg)
         print(f"\n{GREEN}✓ Verbosity set to: {BOLD}{lvl}{RESET}\n")
@@ -435,7 +1306,7 @@ def set_verbosity_interactive(new_level=None):
     mapping = {
         "1": "zero", "zero": "zero", "0": "zero",
         "2": "low", "low": "low",
-        "3": "normal", "normal": "normal"
+        "3": "normal", "normal": "normal",
     }
     chosen = mapping.get(ans)
     if chosen:
@@ -447,52 +1318,43 @@ def set_verbosity_interactive(new_level=None):
     else:
         print(f"\n{RED}✗ Invalid choice.{RESET}\n")
 
+
 # -----------------------------------------------------------------------------
 # Response Cache & Retention
 # -----------------------------------------------------------------------------
 
 def parse_retention(val) -> int:
     """
-    Parses retention time string according to format:
-      m - minutes
-      h - hours
-      D - days
-      M - months
-    Also supports full words (minutes, hours, days, months) and combinations (e.g. 1D 2h).
+    Parses retention duration string into seconds.
+    Units: s (seconds), m (minutes), h (hours), D (days), w (weeks), M (months).
     Values '0', 'off', 'disable', 'none' disable caching (0 seconds).
     """
+    import re
     if isinstance(val, (int, float)):
         return max(0, int(val))
     text = str(val).strip().replace(",", ".")
     text_lower = text.lower()
-    if text_lower in ("0", "off", "disable", "disabled", "none", "false", "brak", "wylacz", "wyłącz"):
+    if text_lower in ("0", "off", "disable", "disabled", "none", "false"):
         return 0
 
-    text = re.sub(r"^(?:retention|retencja|time|czas)\s*(?:=|:|\s)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(?:retention|time)\s*(?:=|:|\s)?\s*", "", text, flags=re.IGNORECASE)
     pattern = r"(\d+(?:\.\d+)?)\s*([a-zA-Z]+)?"
 
-    # Ensure full string matched with no leftovers
     leftover = re.sub(pattern, "", text).strip()
     if leftover:
-        raise ValueError(f"Unrecognized retention time format: \"{leftover}\"")
+        raise ValueError(f'Unrecognized retention time format: "{leftover}"')
 
     matches = list(re.finditer(pattern, text))
     if not matches:
-        raise ValueError(f"Invalid retention time format: \"{val}\"")
+        raise ValueError(f'Invalid retention time format: "{val}"')
 
-    WORD_MAP = {
-        # Seconds
+    word_map = {
         "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
-        # Minutes
-        "min": 60, "mins": 60, "minute": 60, "minutes": 60, "minuta": 60, "minuty": 60, "minut": 60,
-        # Hours
-        "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600, "godz": 3600, "godzina": 3600, "godziny": 3600, "godzin": 3600,
-        # Days
-        "day": 86400, "days": 86400, "dzien": 86400, "dzień": 86400, "dni": 86400,
-        # Weeks
+        "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+        "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+        "day": 86400, "days": 86400,
         "w": 7 * 86400, "wk": 7 * 86400, "week": 7 * 86400, "weeks": 7 * 86400,
-        # Months (30 days)
-        "mo": 30 * 86400, "mon": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400, "miesiac": 30 * 86400, "miesiąc": 30 * 86400, "miesiace": 30 * 86400, "miesiące": 30 * 86400, "miesiecy": 30 * 86400, "miesięcy": 30 * 86400,
+        "mo": 30 * 86400, "mon": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400,
     }
 
     total_seconds = 0
@@ -502,12 +1364,11 @@ def parse_retention(val) -> int:
         if not unit:
             if len(matches) == 1:
                 int_n = int(num) if num.is_integer() else num
-                raise ValueError(f"Missing time unit for value {int_n} (use: m - minutes, h - hours, D - days, M - months)")
-            else:
-                raise ValueError(f"Missing time unit for value {num}")
+                raise ValueError(
+                    f"Missing time unit for value {int_n} (use: m - minutes, h - hours, D - days, M - months)"
+                )
+            raise ValueError(f"Missing time unit for value {num}")
 
-        # Case-sensitive single-letter units:
-        # m - minutes; h - hours; D - days; M - months
         if unit == "m":
             multiplier = 60
         elif unit == "M":
@@ -522,16 +1383,17 @@ def parse_retention(val) -> int:
             multiplier = 7 * 86400
         else:
             u_lower = unit.lower()
-            if u_lower in WORD_MAP:
-                multiplier = WORD_MAP[u_lower]
+            if u_lower in word_map:
+                multiplier = word_map[u_lower]
             else:
-                raise ValueError(f"Unknown time unit: \"{unit}\" (use: m - minutes, h - hours, D - days, M - months)")
+                raise ValueError(f'Unknown time unit: "{unit}" (use: m - minutes, h - hours, D - days, M - months)')
 
         total_seconds += int(num * multiplier)
     return total_seconds
 
+
 def format_retention(sec: int) -> str:
-    """Returns clear, full retention description with concise notation (m, h, D, M)."""
+    """Formats retention seconds into human-readable description with unit notation."""
     if sec <= 0:
         return "disabled (0s)"
     parts = []
@@ -556,8 +1418,9 @@ def format_retention(sec: int) -> str:
         parts.append(f"{s}s")
     return ", ".join(parts) if parts else "0s"
 
+
 def format_retention_short(sec: int) -> str:
-    """Returns short time format using: m - minutes, h - hours, D - days, M - months."""
+    """Formats seconds into compact notation (m, h, D, M)."""
     if sec < 60:
         return f"{sec}s"
     m = sec // 60
@@ -572,17 +1435,18 @@ def format_retention_short(sec: int) -> str:
     h_rem = h % 24
     if d < 30:
         return f"{d}D" if h_rem == 0 else f"{d}D {h_rem}h"
-    M = d // 30
+    mo = d // 30
     d_rem = d % 30
-    return f"{M}M" if d_rem == 0 else f"{M}M {d_rem}D"
+    return f"{mo}M" if d_rem == 0 else f"{mo}M {d_rem}D"
+
 
 def get_effective_retention(override=None):
     """
-    Returns active retention in seconds according to priorities:
-    1. override (--retention / --cache-retention flag)
-    2. HOW_CACHE_RETENTION environment variable
-    3. value from config.json
-    4. default: 3 hours (DEFAULT_CACHE_RETENTION)
+    Resolves active cache retention in seconds by priority:
+    1. CLI override (--retention)
+    2. HOW_CACHE_RETENTION env var
+    3. config.json
+    4. DEFAULT_CACHE_RETENTION (3h)
     """
     if override is not None:
         try:
@@ -612,8 +1476,10 @@ def get_effective_retention(override=None):
 
     return DEFAULT_CACHE_RETENTION
 
+
 def get_db_connection():
-    """Opens connection to SQLite cache database with auto table initialization."""
+    """Opens connection to SQLite cache database with WAL mode and schema initialization."""
+    import sqlite3
     os.makedirs(CACHE_DIR, exist_ok=True)
     conn = sqlite3.connect(CACHE_DB_FILE, timeout=5.0)
     try:
@@ -635,75 +1501,101 @@ def get_db_connection():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_expires_at ON response_cache(expires_at)")
     return conn
 
-def get_cached_response(query, model, verbosity, retention_seconds):
-    """
-    Checks if a valid cached response exists for the query.
-    Returns (response_text, created_at) or None.
-    """
+
+class db_session:
+    """Context manager yielding a SQLite connection, committing on success and rolling back on error."""
+    def __init__(self):
+        self.conn = None
+
+    def __enter__(self):
+        self.conn = get_db_connection()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn:
+            try:
+                if exc_type is None:
+                    try:
+                        self.conn.commit()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.conn.rollback()
+                    except Exception:
+                        pass
+            finally:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+        return False
+
+
+def compute_cache_key(query, model, verbosity, prompt_hash="", docs_hash=""):
+    """Computes deterministic SHA256 cache key from query parameters and context hashes."""
+    import hashlib
+    import re
+    norm_query = re.sub(r"\s+", " ", query.strip())
+    parts = [model, verbosity, norm_query]
+    if prompt_hash:
+        parts.append(prompt_hash)
+    if docs_hash:
+        parts.append(docs_hash)
+    return hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()
+
+
+def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash="", docs_hash=""):
+    """Returns (response_text, created_at) on valid cache hit with sliding expiration update, else None."""
     if retention_seconds <= 0:
         return None
-    conn = None
+    import time
     try:
-        norm_query = re.sub(r"\s+", " ", query.strip())
-        cache_key = hashlib.sha256(f"{model}:{verbosity}:{norm_query}".encode("utf-8")).hexdigest()
+        cache_key = compute_cache_key(query, model, verbosity, prompt_hash=prompt_hash, docs_hash=docs_hash)
         now = time.time()
-        conn = get_db_connection()
-        with conn:
-            # Periodic cleanup of expired entries
+        with db_session() as conn:
             conn.execute("DELETE FROM response_cache WHERE expires_at < ?", (now,))
             cur = conn.cursor()
             cur.execute(
                 "SELECT response, created_at, expires_at FROM response_cache WHERE key = ?",
-                (cache_key,)
+                (cache_key,),
             )
             row = cur.fetchone()
             if row:
                 resp, created_at, expires_at = row
                 if now < expires_at:
-                    # Sliding expiration: refresh expiration window upon cache hit
                     new_expires_at = now + retention_seconds
                     conn.execute(
                         "UPDATE response_cache SET expires_at = ? WHERE key = ?",
-                        (new_expires_at, cache_key)
+                        (new_expires_at, cache_key),
                     )
                     return resp, created_at
     except Exception:
         pass
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
     return None
 
-def save_cached_response(query, model, verbosity, response_text, retention_seconds):
-    """Saves response to cache database with expiration timestamp."""
+
+def save_cached_response(query, model, verbosity, response_text, retention_seconds, prompt_hash="", docs_hash=""):
+    """Stores response in SQLite cache with TTL expiration timestamp."""
     if retention_seconds <= 0 or not response_text:
         return
-    conn = None
+    import time
     try:
-        norm_query = re.sub(r"\s+", " ", query.strip())
-        cache_key = hashlib.sha256(f"{model}:{verbosity}:{norm_query}".encode("utf-8")).hexdigest()
+        cache_key = compute_cache_key(query, model, verbosity, prompt_hash=prompt_hash, docs_hash=docs_hash)
         now = time.time()
         expires_at = now + retention_seconds
-        conn = get_db_connection()
-        with conn:
+        with db_session() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO response_cache (key, query, model, verbosity, response, created_at, expires_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (cache_key, query, model, verbosity, response_text, now, expires_at))
     except Exception:
         pass
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+
 
 def cache_status():
     """Displays detailed cache status."""
+    import time
     retention_sec = get_effective_retention()
     ret_str = format_retention(retention_sec)
     status_label = f"{GREEN}enabled{RESET}" if retention_sec > 0 else f"{YELLOW}disabled (0s){RESET}"
@@ -714,12 +1606,10 @@ def cache_status():
     db_size_kb = 0.0
 
     if os.path.exists(CACHE_DB_FILE):
-        conn = None
         try:
             db_size_kb = os.path.getsize(CACHE_DB_FILE) / 1024.0
-            conn = get_db_connection()
             now = time.time()
-            with conn:
+            with db_session() as conn:
                 cur = conn.cursor()
                 cur.execute("SELECT COUNT(*) FROM response_cache")
                 total_entries = cur.fetchone()[0]
@@ -728,12 +1618,6 @@ def cache_status():
                 expired_entries = total_entries - active_entries
         except Exception:
             pass
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
 
     print(f"\n{BOLD}{MAGENTA}◆ Groq Response Cache Status{RESET}\n")
     print(f"  Status:    {status_label}")
@@ -747,49 +1631,38 @@ def cache_status():
     print(f"  {CYAN}how cache off / on{RESET}          Disable or enable cache")
     print(f"  {CYAN}how --no-cache <query>{RESET}      Query bypassing cache\n")
 
+
 def cache_clear():
-    """Clears cache database entries."""
+    """Clears all cached responses."""
     count = 0
     if os.path.exists(CACHE_DB_FILE):
-        conn = None
         try:
-            conn = get_db_connection()
-            with conn:
+            with db_session() as conn:
                 cur = conn.cursor()
                 cur.execute("SELECT COUNT(*) FROM response_cache")
                 count = cur.fetchone()[0]
                 cur.execute("DELETE FROM response_cache")
-            try:
-                conn.isolation_level = None
-                conn.execute("VACUUM")
-            except Exception:
-                pass
+                conn.commit()
+                try:
+                    conn.isolation_level = None
+                    conn.execute("VACUUM")
+                except Exception:
+                    pass
         except Exception as e:
             print(f"{RED}✗ Error clearing cache: {e}{RESET}\n")
             return
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
     print(f"\n{GREEN}✓ Cache cleared.{RESET} {DIM}Removed {count} entries.{RESET}\n")
 
+
 def cache_set_retention(val=None):
-    """Sets new cache retention time."""
+    """Updates configured cache retention duration."""
     if not val:
         current_sec = get_effective_retention()
         current_str = format_retention(current_sec)
         print(f"\n{BOLD}{MAGENTA}◆ Set Cache Retention Time{RESET}\n")
         print(f"  Current retention: {BOLD}{CYAN}{current_str}{RESET}\n")
         print(f"  {BOLD}Retention format:{RESET} {CYAN}m{RESET} - minutes, {CYAN}h{RESET} - hours, {CYAN}D{RESET} - days, {CYAN}M{RESET} - months")
-        print("  Examples:")
-        print("    30m              -> 30 minutes")
-        print("    3h               -> 3 hours (default)")
-        print("    7D               -> 7 days")
-        print("    1M               -> 1 month (30 days)")
-        print("    3M               -> 3 months (90 days)")
-        print("    0 / off          -> disable cache\n")
+        print("  Examples: 30m, 3h (default), 7D, 1M, 0 / off\n")
         try:
             val = input(f"{BOLD}Enter new retention [{current_str}]: {RESET}").strip()
         except (KeyboardInterrupt, EOFError):
@@ -816,15 +1689,10 @@ def cache_set_retention(val=None):
     else:
         print(f"\n{GREEN}✓ Cache retention updated to:{RESET} {BOLD}{CYAN}{formatted}{RESET} {DIM}({sec}s){RESET}\n")
 
-# -----------------------------------------------------------------------------
-# Lokalny RAG dla manuali systemowych i Omarchy (tldr, man, --help)
-# -----------------------------------------------------------------------------
 
-TLDR_DIRS = [
-    os.path.expanduser("~/.cache/tldr/pages"),
-    os.path.expanduser("~/.local/share/tldr/pages"),
-    "/usr/share/tldr/pages"
-]
+# -----------------------------------------------------------------------------
+# Local System Documentation RAG (Omarchy headers, tldr, man, sandboxed --help)
+# -----------------------------------------------------------------------------
 
 COMMON_STOPWORDS = {
     "how", "to", "in", "on", "a", "an", "the", "is", "are", "was", "were",
@@ -832,18 +1700,20 @@ COMMON_STOPWORDS = {
     "we", "it", "for", "with", "and", "or", "of", "at", "from", "by", "as",
     "if", "then", "else", "not", "no", "yes", "all", "any", "some", "what",
     "which", "who", "whom", "this", "that", "these", "those", "there", "here",
-    "jak", "w", "na", "do", "z", "ze", "o", "dla", "po", "co", "to", "jest",
-    "czy", "sie", "się", "lub", "albo", "i", "oraz", "jaki", "jaka", "jakie",
     "omarchy", "linux", "arch", "console", "terminal", "bash", "zsh", "command",
-    "komenda", "polecenie", "program", "narzedzie", "narzędzie", "skrypt",
     "show", "list", "check", "get", "set", "run", "make", "create", "remove",
-    "delete", "pokaz", "pokaż", "sprawdz", "sprawdź", "usun", "usuń", "włącz",
-    "wyłącz", "restart", "uruchom", "zainstaluj", "install", "update", "upgrade"
+    "delete", "restart", "install", "update", "upgrade",
 }
 
+
 def get_tldr_content(cmd):
-    """Odczytuje stronę tldr bezpośrednio z lokalnego cache Markdown."""
-    for base in TLDR_DIRS:
+    """Reads a local tldr page directly from markdown cache if present."""
+    tldr_dirs = (
+        os.path.expanduser("~/.cache/tldr/pages"),
+        os.path.expanduser("~/.local/share/tldr/pages"),
+        "/usr/share/tldr/pages",
+    )
+    for base in tldr_dirs:
         if not os.path.isdir(base):
             continue
         for platform in ("linux", "common", "osx"):
@@ -857,16 +1727,22 @@ def get_tldr_content(cmd):
                     pass
     return None
 
+
 def get_man_summary(cmd):
-    """Pobiera zwięzły początek systemowej strony podręcznika man."""
+    """Retrieves the top lines of a system man page."""
     import subprocess
     try:
+        env = os.environ.copy()
+        env["MANPAGER"] = "cat"
+        env["PAGER"] = "cat"
         proc = subprocess.run(
             ["man", "-P", "cat", cmd],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=1
+            timeout=1,
+            env=env,
         )
         if proc.returncode == 0 and proc.stdout:
             lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
@@ -875,27 +1751,155 @@ def get_man_summary(cmd):
         pass
     return None
 
-def get_cli_help(cmd):
-    """Pobiera pomoc bezpośrednio z polecenia (np. cmd --help)."""
-    import subprocess
+
+def parse_omarchy_header(file_path):
+    """
+    Reads (# omarchy:*) documentation headers from an Omarchy script on disk.
+    Inspects only the initial comment block (up to 40 lines / 16KB) and rejects binaries.
+    """
     try:
-        proc = subprocess.run(
-            [cmd, "--help"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=1
-        )
-        out = proc.stdout if proc.stdout.strip() else proc.stderr
-        if out.strip():
-            lines = [line.strip() for line in out.splitlines() if line.strip()]
-            return "\n".join(lines[:25]).strip()
+        with open(file_path, "rb") as f:
+            data = f.read(16384)
+        if b"\x00" in data:
+            return None
+        text = data.decode("utf-8", errors="ignore")
+        lines = text.splitlines()[:40]
+        summary = None
+        args = None
+        examples = None
+        aliases = None
+        for line in lines:
+            stripped = line.strip()
+            if not stripped.startswith("#"):
+                if stripped and not stripped.startswith("#!"):
+                    break
+                continue
+            comment_content = stripped.lstrip("#").strip()
+            if comment_content.startswith("omarchy:summary="):
+                summary = comment_content.split("=", 1)[1].strip()
+            elif comment_content.startswith("omarchy:args="):
+                args = comment_content.split("=", 1)[1].strip()
+            elif comment_content.startswith("omarchy:examples="):
+                examples = comment_content.split("=", 1)[1].strip()
+            elif comment_content.startswith("omarchy:aliases="):
+                aliases = comment_content.split("=", 1)[1].strip()
+
+        fields = []
+        if summary:
+            fields.append(f"Summary: {summary}")
+        if args:
+            fields.append(f"Arguments: {args}")
+        if examples:
+            fields.append(f"Examples: {examples}")
+        if aliases:
+            fields.append(f"Aliases: {aliases}")
+
+        if fields:
+            return "\n".join(fields)
     except Exception:
         pass
     return None
 
+
+def build_sandbox_argv(cmd_path, args=None):
+    """Builds bubblewrap (bwrap) command-line arguments for isolated execution."""
+    home_dir = os.environ.get("HOME") or os.path.expanduser("~")
+    argv = [
+        "bwrap",
+        "--ro-bind", "/", "/",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/run",
+        "--tmpfs", "/tmp",
+        "--tmpfs", home_dir,
+        "--tmpfs", "/var/tmp",
+        "--unshare-all",
+        "--new-session",
+        "--die-with-parent",
+        "--cap-drop", "ALL",
+        "--clearenv",
+        "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
+        "--setenv", "HOME", home_dir,
+        "--setenv", "LANG", "C.UTF-8",
+        "--chdir", "/tmp",
+        "--",
+        "timeout", "-k", "1", "2",
+        cmd_path,
+    ]
+    if args:
+        argv.extend(args)
+    return argv
+
+
+def run_sandboxed_help(cmd_path):
+    """Safely executes `<cmd_path> --help` inside a read-only bubblewrap sandbox."""
+    if os.environ.get("HOW_NO_SANDBOX_HELP") == "1":
+        return None
+    import shutil
+    if not shutil.which("bwrap") or not shutil.which("timeout"):
+        return None
+
+    import subprocess
+    argv = build_sandbox_argv(cmd_path, ["--help"])
+    try:
+        proc = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=3,
+        )
+        combined = (proc.stdout or b"") + (b"\n" if proc.stdout and proc.stderr else b"") + (proc.stderr or b"")
+        combined = combined[:4096]
+        text = combined.decode("utf-8", errors="replace").strip()
+        if not text:
+            return None
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return None
+        return "\n".join(lines[:25]).strip()
+    except Exception:
+        pass
+    return None
+
+
+def get_cli_help(cmd):
+    """
+    Retrieves CLI documentation in strict safety order:
+    1. Static on-disk Omarchy header (never executes omarchy/omarchy-* scripts)
+    2. Local tldr page
+    3. System man page
+    4. Bubblewrap sandboxed `--help`
+    """
+    import shutil
+    cmd_path = shutil.which(cmd)
+    if not cmd_path:
+        return None
+
+    if cmd == "omarchy" or cmd.startswith("omarchy-"):
+        header = parse_omarchy_header(cmd_path)
+        if header:
+            return f"=== Documentation header for Omarchy command '{cmd}' ===\n{header}"
+        return f"=== '{cmd}' exists on this system (Omarchy script, no documentation header) ==="
+
+    t = get_tldr_content(cmd)
+    if t:
+        return f"=== Official TLDR documentation for '{cmd}' ===\n{t}"
+
+    m = get_man_summary(cmd)
+    if m:
+        return f"=== System manual (man) for '{cmd}' ===\n{m}"
+
+    h = run_sandboxed_help(cmd_path)
+    if h:
+        return f"=== CLI help output for '{cmd}' ===\n{h}"
+
+    return None
+
+
 def extract_candidate_commands(query):
-    """Wyciąga potencjalne nazwy poleceń CLI z zapytania użytkownika."""
+    """Extracts candidate CLI binary names from a natural language query."""
+    import re
     tokens = re.findall(r"[a-zA-Z0-9_\-\.]+", query.lower())
     candidates = []
     for t in tokens:
@@ -906,86 +1910,74 @@ def extract_candidate_commands(query):
             candidates.append(t_clean)
     return candidates
 
-def get_system_docs_context(query):
-    """
-    Szybki lokalny RAG: sprawdza czy w zapytaniu występuje polecenie systemowe
-    i dołącza jego lokalną dokumentację (tldr -> man -> --help) do kontekstu Groq.
-    """
-    paths = os.environ.get("PATH", "").split(os.path.pathsep)
-    bins = set()
-    for p in paths:
-        if os.path.isdir(p):
+
+def docs_fingerprint(query):
+    """Computes a fast stat-only fingerprint of candidate commands without spawning subprocesses."""
+    import hashlib
+    import shutil
+    candidates = extract_candidate_commands(query)
+    entries = []
+    for cmd in candidates:
+        cmd_path = shutil.which(cmd)
+        if cmd_path:
             try:
-                for entry in os.listdir(p):
-                    bins.add(entry)
+                st = os.stat(cmd_path)
+                entries.append((cmd, os.path.realpath(cmd_path), st.st_mtime_ns, st.st_size))
             except Exception:
                 pass
+    return hashlib.sha256(repr(entries).encode("utf-8")).hexdigest()[:16]
 
+
+def get_system_docs_context(query):
+    """Attaches up to 2 local CLI documentation snippets for commands mentioned in query."""
+    import shutil
     candidates = extract_candidate_commands(query)
     found_docs = []
     for cmd in candidates:
-        if cmd not in bins and not cmd.startswith("omarchy-"):
+        if not shutil.which(cmd):
             continue
-
-        # 1. Sprawdź tldr
-        t = get_tldr_content(cmd)
-        if t:
-            found_docs.append(f"=== Official TLDR documentation for '{cmd}' ===\n{t}")
+        doc = get_cli_help(cmd)
+        if doc:
+            found_docs.append(doc)
             if len(found_docs) >= 2:
                 break
-            continue
-
-        # 2. Sprawdź man
-        m = get_man_summary(cmd)
-        if m:
-            found_docs.append(f"=== System manual (man) for '{cmd}' ===\n{m}")
-            if len(found_docs) >= 2:
-                break
-            continue
-
-        # 3. Sprawdź --help
-        h = get_cli_help(cmd)
-        if h:
-            found_docs.append(f"=== CLI help output for '{cmd}' ===\n{h}")
-            if len(found_docs) >= 2:
-                break
-
     if not found_docs:
         return ""
     return "\n\n" + "\n\n".join(found_docs)
 
+
 # -----------------------------------------------------------------------------
-# Przetwarzanie promptów, poleceń i schowka
+# Prompt Formatting, Command Extraction, History & Clipboard
 # -----------------------------------------------------------------------------
 
 def format_query(raw_query):
-    """Optymalizuje prompt w kontekście konsoli Omarchy."""
+    """Formats the user query with Omarchy console context."""
     q = raw_query.strip()
     if "in omarchy" in q.lower():
         return q
-
-    # Usuń ewentualny zbędny przedrostek 'to' jeśli podano 'how to ...'
     if q.lower().startswith("to "):
         return f"In Omarchy console how {q}"
-    else:
-        if any(q.lower().startswith(prefix) for prefix in ("auth ", "model ", "display ", "audio ", "network ")):
-            return f"In Omarchy console: how {q}"
-        return f"In Omarchy console: {q}"
+    if any(q.lower().startswith(p) for p in ("auth ", "model ", "display ", "audio ", "network ")):
+        return f"In Omarchy console: how {q}"
+    return f"In Omarchy console: {q}"
+
 
 def log_command_proposal(query, command, executed=False):
-    """Logs command proposal to ~/.config/how/commands.log"""
+    """Logs proposed command to ~/.config/how/commands.log."""
+    import time
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(COMMANDS_LOG, "a", encoding="utf-8") as f:
             status = "EXECUTED" if executed else "PROPOSED"
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
             q_clean = query.strip() if query else "-"
-            f.write(f"[{ts}] [{status}] Query: \"{q_clean}\" | Command: {command.strip()}\n")
+            f.write(f'[{ts}] [{status}] Query: "{q_clean}" | Command: {command.strip()}\n')
     except Exception:
         pass
 
+
 def copy_to_clipboard(text):
-    """Copies text to Wayland (wl-copy) or X11 (xclip) clipboard if available."""
+    """Copies text to Wayland (wl-copy) or X11 (xclip/xsel) clipboard if available."""
     import subprocess
     for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard"]):
         try:
@@ -997,8 +1989,9 @@ def copy_to_clipboard(text):
             continue
     return False
 
+
 def show_command_history(limit=15, filter_term=None):
-    """Displays recently proposed commands."""
+    """Displays recent command suggestions from commands.log."""
     if not os.path.exists(COMMANDS_LOG):
         print(f"\n{DIM}No command history recorded.{RESET}\n")
         return
@@ -1015,31 +2008,71 @@ def show_command_history(limit=15, filter_term=None):
         if not lines:
             print(f"  {DIM}No commands matching filter.{RESET}\n")
             return
-        recent = lines[-limit:]
-        for line in recent:
-            if "[EXECUTED]" in line or "[WYKONANO]" in line:
+        for line in lines[-limit:]:
+            if "[EXECUTED]" in line:
                 print(f"  {GREEN}✓{RESET} {DIM}{line}{RESET}")
             else:
                 print(f"  {CYAN}➜{RESET} {DIM}{line}{RESET}")
-        print(f"\n{DIM}Tip: Commands are saved to ~/.bash_history and copied to system clipboard.{RESET}\n")
+        print(f"\n{DIM}Tip: Run 'how bash-history on' to append suggestions to ~/.bash_history.{RESET}\n")
     except Exception as e:
         print(f"{RED}Error reading history: {e}{RESET}\n")
 
-def save_to_bash_history(cmd):
-    """Appends command to user's ~/.bash_history."""
+
+def is_bash_history_enabled():
+    """Returns True if saving to ~/.bash_history is enabled via env or config."""
+    env_val = os.environ.get("HOW_BASH_HISTORY")
+    if env_val in ("1", "true", "yes"):
+        return True
+    cfg = load_config()
+    return bool(cfg.get("bash_history", False))
+
+
+def set_bash_history_setting(action):
+    """Enables, disables, or shows status of ~/.bash_history integration."""
+    cfg = load_config()
+    current = is_bash_history_enabled()
+    action = (action or "status").lower().strip()
+
+    if action in ("on", "enable", "1", "true"):
+        cfg["bash_history"] = True
+        save_config(cfg)
+        print(f"\n{GREEN}✓ Saving suggestions to ~/.bash_history is now ENABLED.{RESET}\n")
+    elif action in ("off", "disable", "0", "false"):
+        cfg["bash_history"] = False
+        save_config(cfg)
+        print(f"\n{YELLOW}✓ Saving suggestions to ~/.bash_history is now DISABLED.{RESET}\n")
+    elif action in ("status", "info"):
+        status_str = f"{GREEN}enabled{RESET}" if current else f"{DIM}disabled{RESET}"
+        print(f"\n{BOLD}Bash History Integration:{RESET} {status_str}")
+        print(f"{DIM}Toggle with: {CYAN}how bash-history on|off{RESET}\n")
+    else:
+        print(f"\n{RED}✗ Invalid option '{action}'. Use: how bash-history on|off|status{RESET}\n")
+
+
+def save_to_bash_history(cmd, query=""):
+    """Appends command to ~/.bash_history with an unverified AI suggestion header if opted in."""
+    if not is_bash_history_enabled():
+        return
     try:
         hist_path = os.path.expanduser("~/.bash_history")
         with open(hist_path, "a", encoding="utf-8") as f:
+            clean_query = query.strip() if query else ""
+            if clean_query:
+                f.write(f"# how: unverified AI suggestion for: {clean_query}\n")
+            else:
+                f.write("# how: unverified AI suggestion\n")
             f.write(cmd.strip() + "\n")
     except Exception:
         pass
 
+
 def extract_executable_command(text):
-    """Extracts first command from ```bash ... ``` or ```sh ... ``` code block."""
+    """Extracts the executable command from a ```bash or ```sh code block."""
     clean_text = text.strip().lower().rstrip(".!?:")
-    if clean_text in ("i don't know", "i dont know", "nie wiem", "idk"):
+    if clean_text in ("i don't know", "i dont know", "idk"):
         return None
 
+    import re
     m = re.search(r"```(?:bash|sh)?\s*\n(.*?)\n```", text, re.DOTALL)
     if not m:
         return None
@@ -1059,16 +2092,14 @@ def extract_executable_command(text):
 
     return lines[0]
 
+
 def display_suggested_command(command, query="", is_cached=False):
-    """
-    Prints suggested command directly to console,
-    copies it to clipboard and logs to commands.log and bash history.
-    """
+    """Displays suggested command, copies to clipboard, and records in history logs."""
     cmd = command.strip()
     if not cmd:
         return
 
-    save_to_bash_history(cmd)
+    save_to_bash_history(cmd, query=query)
     log_command_proposal(query, cmd, executed=False)
     copied = copy_to_clipboard(cmd)
     clip_hint = f" {GREEN}[copied to clipboard: paste Ctrl+Shift+V]{RESET}" if copied else ""
@@ -1077,11 +2108,73 @@ def display_suggested_command(command, query="", is_cached=False):
     print(f"{BOLD}{CYAN}Suggested command:{RESET}{cache_tag}{clip_hint}")
     print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
+
+def emit_command(cmd, query="", verbosity="normal", is_cached=False, raw_text=""):
+    """Unified output handler for zero and non-zero verbosity across cache and live paths."""
+    if cmd:
+        if verbosity == "zero":
+            save_to_bash_history(cmd, query=query)
+            log_command_proposal(query, cmd, executed=False)
+            copied = copy_to_clipboard(cmd)
+            clip_hint = f" {GREEN}[copied: Ctrl+Shift+V]{RESET}" if copied else ""
+            cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
+            print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint}{cache_tag}\n")
+        else:
+            display_suggested_command(cmd, query=query, is_cached=is_cached)
+    elif verbosity == "zero":
+        cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
+        text = (raw_text or "").strip()
+        if cache_tag:
+            print(f"{text} {YELLOW}[cache]{RESET}\n")
+        else:
+            print(text + "\n")
+
+
+def stream_groq_response(req, verbosity="normal"):
+    """Streams SSE chunks from Groq API, stripping control sequences on the fly."""
+    import json
+    import urllib.request
+
+    full_response = []
+    with urllib.request.urlopen(req, timeout=30) as response:
+        for line in response:
+            line = line.decode("utf-8").strip()
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    raw_delta = chunk["choices"][0]["delta"].get("content", "")
+                    clean_delta = strip_control_sequences(raw_delta)
+                    full_response.append(clean_delta)
+                    if verbosity != "zero":
+                        sys.stdout.write(clean_delta)
+                        sys.stdout.flush()
+                except Exception:
+                    pass
+    if verbosity != "zero":
+        print(f"{RESET}\n")
+    return strip_control_sequences("".join(full_response))
+
+
 # -----------------------------------------------------------------------------
-# Główne zapytanie do Groq API
+# Main Query Execution (Cache -> Triage -> Fast Groq / Deep Thinking)
 # -----------------------------------------------------------------------------
 
-def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_retention=None):
+def ask_groq(
+    raw_query,
+    verbosity=None,
+    no_cache=False,
+    custom_retention=None,
+    think_mode=None,
+    no_context=False,
+    force_context=False,
+):
+    import hashlib
+    import json
+    import time
+
     cfg = load_config()
     model = cfg.get("model", DEFAULT_MODEL)
     if model == "groq/compound":
@@ -1094,166 +2187,181 @@ def ask_groq(raw_query, copy_only=False, verbosity=None, no_cache=False, custom_
     if verbosity not in ("zero", "low", "normal"):
         verbosity = "normal"
 
-    # Sprawdzenie pamięci podręcznej (Cache)
+    env_context = get_active_environment_context(
+        cfg, no_context=no_context, force_context=force_context
+    )
+    sys_prompt = get_system_prompt(verbosity, deep_mode=(think_mode == "deep"), env_context=env_context)
+    prompt_hash = hashlib.sha256(sys_prompt.encode("utf-8")).hexdigest()[:16]
+    docs_hash = docs_fingerprint(raw_query)
+
     retention_sec = get_effective_retention(custom_retention)
     env_no_cache = os.environ.get("HOW_NO_CACHE") in ("1", "true", "yes")
     bypass_cache = no_cache or env_no_cache or (retention_sec <= 0)
 
+    cache_model_key = f"deep:{model}" if think_mode == "deep" else model
+
     if not bypass_cache:
-        cached = get_cached_response(raw_query, model, verbosity, retention_sec)
+        cached = get_cached_response(
+            raw_query, cache_model_key, verbosity, retention_sec,
+            prompt_hash=prompt_hash, docs_hash=docs_hash,
+        )
         if cached:
             cached_text, cached_at = cached
+            cached_text = strip_control_sequences(cached_text)
             age_sec = max(0, int(time.time() - cached_at))
             age_str = format_retention_short(age_sec) + " ago" if age_sec > 0 else "just now"
 
             if verbosity != "zero":
                 v_info = f", {verbosity}" if verbosity != "normal" else ""
-                print(f"\n{CYAN}{BOLD}how ❯{RESET} {YELLOW}[cache]{RESET} {DIM}(model: {model}{v_info}, {age_str}){RESET}\n")
+                print(f"\n{CYAN}{BOLD}how ❯{RESET} {YELLOW}[cache]{RESET} {DIM}(model: {cache_model_key}{v_info}, {age_str}){RESET}\n")
                 print(cached_text.strip() + f"{RESET}\n")
 
             cmd = extract_executable_command(cached_text)
-            if cmd:
-                if verbosity == "zero":
-                    save_to_bash_history(cmd)
-                    log_command_proposal(raw_query, cmd, executed=False)
-                    copied = copy_to_clipboard(cmd)
-                    clip_hint = f" {GREEN}[copied: Ctrl+Shift+V]{RESET}" if copied else ""
-                    print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint} {YELLOW}[cache]{RESET}\n")
-                else:
-                    display_suggested_command(cmd, query=raw_query, is_cached=True)
-            else:
-                if verbosity == "zero":
-                    print(f"{cached_text.strip()} {YELLOW}[cache]{RESET}\n")
+            emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=True, raw_text=cached_text)
             return
 
-    # If not in cache, require Groq API key
-    import urllib.request
     import urllib.error
-    api_key = get_api_key()
-    if not api_key:
-        print(f"{YELLOW}! Groq API key required.{RESET}")
-        auth_login()
-        api_key = get_api_key()
-        if not api_key:
-            return
+    import urllib.request
 
-    optimized_prompt = format_query(raw_query)
+    api_key = require_api_key(message="! Groq API key required.")
+    if not api_key:
+        return
+
     docs_context = get_system_docs_context(raw_query)
+    optimized_prompt = format_query(raw_query)
+    if env_context:
+        optimized_prompt += f"\n\nEnvironment & Project Stack:\n{env_context}"
     if docs_context:
         optimized_prompt += f"\n\nContext from local system documentation:\n{docs_context}"
 
-    sys_prompt = get_system_prompt(verbosity)
+    # Determine Fast vs Deep Thinking route via explicit flag or Groq Triage
+    use_deep = False
+    triage_reason = ""
+    if think_mode == "deep":
+        use_deep = True
+        triage_reason = "explicit --think flag"
+    elif think_mode == "fast":
+        use_deep = False
+    elif cfg.get("triage", False) or os.environ.get("HOW_TRIAGE") in ("1", "true", "yes"):
+        t_res = triage_query_with_groq(raw_query, env_context=env_context, api_key=api_key, cfg=cfg)
+        if t_res.get("route") == "deep":
+            use_deep = True
+            triage_reason = t_res.get("reason", "complex query")
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": optimized_prompt}
-        ],
-        "stream": True,
-        "temperature": 0.1
-    }
-
-    headers = {
-        **COMMON_HEADERS,
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    req = urllib.request.Request(
-        GROQ_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers
-    )
-
-    if verbosity != "zero":
-        v_info = f", {verbosity}" if verbosity != "normal" else ""
-        print(f"\n{CYAN}{BOLD}how ❯{RESET} {DIM}(model: {model}{v_info}){RESET}\n")
-
-    full_response = []
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            for line in response:
-                line = line.decode("utf-8").strip()
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk["choices"][0]["delta"].get("content", "")
-                        full_response.append(delta)
-                        if verbosity != "zero":
-                            sys.stdout.write(delta)
-                            sys.stdout.flush()
-                    except Exception:
-                        pass
+    if use_deep:
+        deep_sys = get_system_prompt(verbosity, deep_mode=True, env_context=env_context)
+        prov, d_mod, _ = resolve_deep_provider(cfg)
         if verbosity != "zero":
-            print(f"{RESET}\n")
+            reason_tag = f" • {triage_reason}" if triage_reason else ""
+            print(f"\n{CYAN}{BOLD}how ❯{RESET} {MAGENTA}[deep: {prov}:{d_mod}{reason_tag}]{RESET}\n")
+        deep_text, used_label = ask_deep_model(deep_sys, optimized_prompt, verbosity=verbosity, cfg=cfg)
+        if deep_text.strip():
+            if not bypass_cache:
+                save_cached_response(
+                    raw_query, cache_model_key, verbosity, deep_text, retention_sec,
+                    prompt_hash=prompt_hash, docs_hash=docs_hash,
+                )
+            cmd = extract_executable_command(deep_text)
+            emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=False, raw_text=deep_text)
+            return
 
-        full_text = "".join(full_response)
+    tried_models = set()
+    initial_model = model
+    current_model = model
+    fallback_pool = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
-        # Save to response cache if query succeeded
-        if not bypass_cache and full_text.strip():
-            save_cached_response(raw_query, model, verbosity, full_text, retention_sec)
+    while True:
+        tried_models.add(current_model)
+        payload = {
+            "model": current_model,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": optimized_prompt},
+            ],
+            "stream": True,
+            "temperature": 0.1,
+        }
 
-        cmd = extract_executable_command(full_text)
-        if cmd:
-            if verbosity == "zero":
-                save_to_bash_history(cmd)
-                log_command_proposal(raw_query, cmd, executed=False)
-                copied = copy_to_clipboard(cmd)
-                clip_hint = f" {GREEN}[copied: Ctrl+Shift+V]{RESET}" if copied else ""
-                print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint}\n")
-            else:
-                display_suggested_command(cmd, query=raw_query)
-        else:
-            if verbosity == "zero":
-                print(full_text.strip() + "\n")
+        headers = {
+            **COMMON_HEADERS,
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8")
+        req = urllib.request.Request(
+            GROQ_API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+        )
+
+        if verbosity != "zero":
+            v_info = f", {verbosity}" if verbosity != "normal" else ""
+            print(f"\n{CYAN}{BOLD}how ❯{RESET} {DIM}(model: {current_model}{v_info}){RESET}\n")
+
         try:
-            err_json = json.loads(err_msg)
-            msg = err_json.get("error", {}).get("message", err_msg)
-        except Exception:
-            msg = err_msg
+            full_text = stream_groq_response(req, verbosity=verbosity)
 
-        if e.code == 429:
-            print(f"\n{YELLOW}⚡ Groq API rate limit reached (429 Rate Limit). Try again in a moment.{RESET}\n")
-        elif e.code in (404, 503):
-            fallback_models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
-            untried = [m for m in fallback_models if m != model]
-            if untried:
-                next_model = untried[0]
-                print(f"\n{YELLOW}! Model '{model}' unavailable ({e.code}).{RESET}")
-                print(f"{CYAN}➜ Automatic fallback to model: '{next_model}'...{RESET}\n")
-                cfg["model"] = next_model
+            if not bypass_cache and full_text.strip():
+                save_cached_response(
+                    raw_query, current_model, verbosity, full_text, retention_sec,
+                    prompt_hash=prompt_hash, docs_hash=docs_hash,
+                )
+
+            if current_model != initial_model:
+                cfg["model"] = current_model
                 save_config(cfg)
-                ask_groq(raw_query, copy_only=copy_only, verbosity=verbosity, no_cache=no_cache, custom_retention=custom_retention)
+
+            cmd = extract_executable_command(full_text)
+            emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=False, raw_text=full_text)
+            return
+
+        except urllib.error.HTTPError as e:
+            try:
+                err_msg = e.read().decode("utf-8")
+                try:
+                    err_json = json.loads(err_msg)
+                    msg = err_json.get("error", {}).get("message", err_msg)
+                except Exception:
+                    msg = err_msg
+            finally:
+                try:
+                    e.close()
+                except Exception:
+                    pass
+
+            if e.code == 429:
+                print(f"\n{YELLOW}⚡ Groq API rate limit reached (429 Rate Limit). Try again in a moment.{RESET}\n")
                 return
-            else:
+            if e.code in (404, 503):
+                candidates = [m for m in fallback_pool if m not in tried_models]
+                if candidates:
+                    next_model = candidates[0]
+                    print(f"\n{YELLOW}! Model '{current_model}' unavailable ({e.code}).{RESET}")
+                    print(f"{CYAN}➜ Automatic fallback to model: '{next_model}'...{RESET}\n")
+                    current_model = next_model
+                    continue
                 print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
-        else:
+                return
             print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
-    except KeyboardInterrupt:
-        print(f"\n{YELLOW}Interrupted by user.{RESET}\n")
-    except Exception as e:
-        print(f"\n{RED}✗ Connection error: {e}{RESET}\n")
+            return
+        except KeyboardInterrupt:
+            print(f"\n{YELLOW}Interrupted by user.{RESET}\n")
+            return
+        except Exception as e:
+            print(f"\n{RED}✗ Connection error: {e}{RESET}\n")
+            return
+
 
 # -----------------------------------------------------------------------------
-# Pomoc i punkt wejścia CLI
+# Feedback, Self-Test & CLI Entrypoint
 # -----------------------------------------------------------------------------
 
 def check_feedback_safety(message: str) -> tuple[bool, str]:
-    """
-    Validates feedback content against DoS (payload size) and Prompt Injection / Malicious patterns.
-    Returns (is_safe, reason).
-    """
+    """Validates feedback content against payload size limits and prompt-injection patterns."""
     if len(message) > 1000:
         return False, "Feedback message exceeds maximum allowed length (1000 chars)."
 
-    # Prompt injection & jailbreak signature detection
+    import re
     injection_patterns = [
         r"ignore\s+(previous|all)\s+instructions",
         r"disregard\s+(previous|all)\s+instructions",
@@ -1282,12 +2390,12 @@ def check_feedback_safety(message: str) -> tuple[bool, str]:
 
     return True, ""
 
-def send_terminal_feedback(message=""):
-    """
-    Submits ultra-lightweight feedback directly from the terminal.
-    Includes rate-limiting (anti-DoS) and prompt-injection safety guardrails.
-    If rejected, politely directs user to contact @mtulds on X.
-    """
+
+def send_terminal_feedback(message="", auto_yes=False):
+    """Submits lightweight feedback from the terminal with rate-limiting, safety checks, and consent."""
+    import json
+    import time
+
     if not message:
         print(f"\n{BOLD}{MAGENTA}◆ Quick Terminal Feedback{RESET}")
         print(f"{DIM}Share a quick thought, broken command, or suggestion directly from terminal.{RESET}\n")
@@ -1300,7 +2408,6 @@ def send_terminal_feedback(message=""):
             print(f"{DIM}Feedback cancelled.{RESET}")
             return
 
-    # 1. Rate-limiting guardrail (local anti-flood: max 1 submission per 10 seconds)
     cfg = load_config()
     last_sent = cfg.get("last_feedback_time", 0)
     now = time.time()
@@ -1308,33 +2415,49 @@ def send_terminal_feedback(message=""):
         print(f"\n{YELLOW}! Please wait {int(10 - (now - last_sent))}s before sending another feedback.{RESET}\n")
         return
 
-    # 2. Content & Prompt-Injection Safety Guardrail
     is_safe, reason = check_feedback_safety(message)
     if not is_safe:
         print(f"\n{YELLOW}Sorry, this feedback could not be accepted automatically ({reason}).{RESET}")
         print(f"{BOLD}Please share your feedback or problem directly via X (Twitter) with {CYAN}@mtulds{RESET}.\n")
         return
 
-    # Update rate-limiting timestamp
+    repo_target = "mdsyseng/how"
+    issue_title = f"Quick Feedback: {message[:60]}"
+    print(f"\n{BOLD}{MAGENTA}◆ Feedback Preview{RESET}")
+    print(f"  Target: {CYAN}{repo_target}{RESET}")
+    print(f"  Title:  {BOLD}{issue_title}{RESET}")
+    print(f"  Body:   {DIM}{message}{RESET}\n")
+
+    if not auto_yes:
+        if not sys.stdin.isatty() or os.environ.get("HOW_NO_BROWSER") == "1":
+            print(f"{YELLOW}! Non-interactive shell detected. Feedback not sent.{RESET}")
+            print(f'{DIM}To send non-interactively, run:{RESET} {CYAN}how feedback --yes "{message}"{RESET}\n')
+            return
+        try:
+            ans = input(f"{CYAN}Send this issue? [y/N]:{RESET} ").strip().lower()
+            if ans not in ("y", "yes"):
+                print(f"{DIM}Feedback cancelled.{RESET}\n")
+                return
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{DIM}Feedback cancelled.{RESET}\n")
+            return
+
     cfg["last_feedback_time"] = now
     save_config(cfg)
 
-    # Check for configured webhook (e.g. Google Apps Script / Worker / Form URL)
     webhook_url = os.environ.get("HOW_FEEDBACK_WEBHOOK") or cfg.get("feedback_webhook")
-
     if webhook_url:
         import urllib.request
-        import urllib.error
         payload = json.dumps({
             "feedback": message,
             "timestamp": now,
-            "version": "0.1.1",
-            "os": sys.platform
+            "version": __version__,
+            "os": sys.platform,
         }).encode("utf-8")
         req = urllib.request.Request(
             webhook_url,
             data=payload,
-            headers={**COMMON_HEADERS, "Content-Type": "application/json"}
+            headers={**COMMON_HEADERS, "Content-Type": "application/json"},
         )
         print(f"{DIM}Sending feedback...{RESET} ", end="", flush=True)
         try:
@@ -1345,15 +2468,15 @@ def send_terminal_feedback(message=""):
         except Exception:
             print(f"{YELLOW}(webhook unavailable){RESET}")
 
-    # GitHub CLI fallback (if user has `gh` installed and authenticated, zero browser hop!)
     import subprocess
     try:
         proc = subprocess.run(
-            ["gh", "issue", "create", "--repo", "mdsyseng/how", "--title", f"Quick Feedback: {message[:60]}", "--body", message, "--label", "feedback"],
+            ["gh", "issue", "create", "--repo", repo_target, "--title", issue_title, "--body", message, "--label", "feedback"],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=5
+            timeout=5,
         )
         if proc.returncode == 0:
             issue_url = proc.stdout.strip()
@@ -1362,11 +2485,11 @@ def send_terminal_feedback(message=""):
     except Exception:
         pass
 
-    # Browser fallback
     open_feedback_url(message)
 
+
 def open_feedback_url(query=""):
-    """Opens GitHub issues page to effortlessly report a bug or suggest an improvement."""
+    """Opens GitHub issue creation page in browser."""
     import urllib.parse
     base_url = "https://github.com/mdsyseng/how/issues/new"
     if query:
@@ -1381,13 +2504,10 @@ def open_feedback_url(query=""):
     if not open_url_in_browser(url):
         print(f"{YELLOW}! Could not open browser automatically. Visit the link above to submit feedback.{RESET}\n")
 
-def run_self_test(use_docker=False, auto_stats=False):
-    """
-    Runs self-test & Verification and Validation (V&V).
-    Delegates to tests/test_ab_bench.py to maintain complete process isolation and avoid recursion.
-    """
-    import subprocess
 
+def run_self_test(use_docker=False, auto_stats=False):
+    """Runs V&V and A/B benchmark test suite."""
+    import subprocess
     repo_dir = os.path.dirname(os.path.realpath(__file__))
 
     if use_docker:
@@ -1418,38 +2538,260 @@ def run_self_test(use_docker=False, auto_stats=False):
             cmd.append("--stats")
         res = subprocess.run(cmd)
         sys.exit(res.returncode)
-    else:
-        # Fallback to direct V&V if bench script is missing
-        test_script = os.path.join(repo_dir, "tests", "test_vv_suite.py")
-        if os.path.exists(test_script):
-            res = subprocess.run([sys.executable, test_script])
-            sys.exit(res.returncode)
+
+    test_script = os.path.join(repo_dir, "tests", "test_vv_suite.py")
+    if os.path.exists(test_script):
+        res = subprocess.run([sys.executable, test_script])
+        sys.exit(res.returncode)
+
+    print(f"{RED}✗ Test suite not found in {repo_dir}/tests.{RESET}")
+    sys.exit(1)
+
+
+def parse_cli_args(raw_args):
+    """Parses raw CLI arguments into options dict and remaining positional arguments."""
+    verbosity = None
+    no_cache = False
+    custom_retention = None
+    feedback_mode = False
+    feedback_yes = False
+    version_requested = False
+    think_mode = None
+    no_context = False
+    force_context = False
+    args = []
+
+    if len(raw_args) == 1 and raw_args[0] in ("--version", "-V", "version"):
+        return {"version_requested": True}, []
+
+    is_feedback_context = False
+    for a in raw_args:
+        if a.lower() in ("--feedback", "--bug", "--issue", "--report"):
+            is_feedback_context = True
+            break
+        if not a.startswith("-"):
+            if a.lower() in ("feedback", "bug", "report", "issue"):
+                is_feedback_context = True
+            break
+
+    i = 0
+    while i < len(raw_args):
+        a = raw_args[i]
+        a_lower = a.lower()
+        if a_lower in ("--feedback", "--bug", "--issue", "--report"):
+            feedback_mode = True
+            i += 1
+        elif is_feedback_context and a_lower in ("-y", "--yes"):
+            feedback_yes = True
+            i += 1
+        elif a_lower in ("-0", "--zero", "-q", "--quiet"):
+            verbosity = "zero"
+            i += 1
+        elif a_lower == "--low":
+            verbosity = "low"
+            i += 1
+        elif a_lower == "--normal":
+            verbosity = "normal"
+            i += 1
+        elif a_lower in ("-t", "--think", "--deep"):
+            think_mode = "deep"
+            i += 1
+        elif a_lower == "--fast":
+            think_mode = "fast"
+            i += 1
+        elif a_lower == "--no-context":
+            no_context = True
+            i += 1
+        elif a_lower == "--context":
+            force_context = True
+            i += 1
+        elif a_lower in ("-v", "--verbosity"):
+            if i + 1 < len(raw_args):
+                cand = raw_args[i + 1].lower().strip()
+                if cand in ("zero", "0", "none", "quiet"):
+                    verbosity = "zero"
+                elif cand in ("low", "1", "minimal", "min"):
+                    verbosity = "low"
+                elif cand in ("normal", "2", "default", "standard"):
+                    verbosity = "normal"
+                else:
+                    print(f"{RED}✗ Invalid verbosity level: '{raw_args[i + 1]}'{RESET}")
+                    print(f"{DIM}Allowed: zero (command only), low (minimal description), normal (standard){RESET}\n")
+                    sys.exit(2)
+                i += 2
+            else:
+                print(f"{RED}✗ Provide verbosity level after {a} (zero, low, normal).{RESET}")
+                sys.exit(2)
+        elif a_lower.startswith("--verbosity="):
+            cand = a.split("=", 1)[1].lower().strip()
+            if cand in ("zero", "0", "none", "quiet"):
+                verbosity = "zero"
+            elif cand in ("low", "1", "minimal", "min"):
+                verbosity = "low"
+            elif cand in ("normal", "2", "default", "standard"):
+                verbosity = "normal"
+            else:
+                print(f"{RED}✗ Invalid verbosity level: '{a.split('=', 1)[1]}'{RESET}")
+                print(f"{DIM}Allowed: zero (command only), low (minimal description), normal (standard){RESET}\n")
+                sys.exit(2)
+            i += 1
+        elif a_lower in ("--no-cache", "--fresh", "--refresh"):
+            no_cache = True
+            i += 1
+        elif a_lower in ("--retention", "--cache-retention"):
+            if i + 1 < len(raw_args):
+                custom_retention = raw_args[i + 1]
+                i += 2
+            else:
+                print(f"{RED}✗ Provide retention time after {a} (e.g. 30m, 3h, 7D, 1M).{RESET}")
+                sys.exit(1)
+        elif a_lower.startswith("--retention=") or a_lower.startswith("--cache-retention="):
+            custom_retention = a.split("=", 1)[1]
+            i += 1
         else:
-            print(f"{RED}✗ Test suite not found in {repo_dir}/tests.{RESET}")
-            sys.exit(1)
+            args.append(raw_args[i])
+            i += 1
 
-def print_help():
-    help_text = f"""Usage:
-  {CYAN}how{RESET} [-0|--low] [--no-cache] <query...>
-  {CYAN}how{RESET} <command> [args...]
+    opts = {
+        "verbosity": verbosity,
+        "no_cache": no_cache,
+        "custom_retention": custom_retention,
+        "feedback_mode": feedback_mode,
+        "feedback_yes": feedback_yes,
+        "version_requested": version_requested,
+        "think_mode": think_mode,
+        "no_context": no_context,
+        "force_context": force_context,
+    }
+    return opts, args
 
-Commands:
-  {CYAN}auth{RESET} [login|status|logout]   Manage Groq API key
-  {CYAN}model{RESET} [check]                Select and test models
-  {CYAN}cache{RESET} [retention|clear]      Response cache and retention (m, h, D, M)
-  {CYAN}verbosity{RESET} [zero|low|normal]  Default output verbosity
-  {CYAN}history{RESET} [filter]              Recent command suggestions
-  {CYAN}feedback{RESET} [text...]            Send quick feedback directly from terminal
-  {CYAN}test{RESET} [--docker]               Run self-test (A/B comparison if modified)
 
-Options:
-  {GREEN}-0, --zero{RESET}                   Command only (no explanation)
-  {GREEN}--low{RESET}                        Minimal 1-sentence explanation
-  {GREEN}--no-cache{RESET}                   Bypass response cache
-  {GREEN}--retention <time>{RESET}           Temporary cache retention (e.g. 30m, 3h, 7D, 1M)
-  {GREEN}--feedback, --bug{RESET}            Quick feedback link for the current query
-"""  # nosec B608
-    print(help_text)
+def dispatch_subcommand(args, opts):
+    """Dispatches administrative CLI subcommands. Returns True if handled."""
+    if not args:
+        return False
+
+    first = args[0].lower()
+
+    if opts.get("version_requested") or (
+        len(args) == 1 and (first in ("version", "--version") or args[0] == "-V")
+    ):
+        print(f"how {__version__}")
+        return True
+
+    if first == "context":
+        if len(args) == 1 or args[1].lower() in ("status", "info", "on", "off", "enable", "disable", "os", "stack", "refresh"):
+            manage_context_command(args[1:])
+            return True
+
+    if first == "triage":
+        manage_triage_command(args[1:])
+        return True
+
+    if first in ("verbosity", "verbose"):
+        target_v = args[1] if len(args) > 1 else None
+        set_verbosity_interactive(target_v)
+        return True
+
+    if first in ("self-test", "test", "check-self"):
+        use_docker = any(x in args[1:] for x in ("--docker", "-d", "docker"))
+        auto_stats = any(x in args[1:] for x in ("--stats", "-s", "--ci"))
+        run_self_test(use_docker=use_docker, auto_stats=auto_stats)
+        return True
+
+    if first in ("feedback", "bug", "report", "issue"):
+        msg = " ".join(args[1:])
+        send_terminal_feedback(msg, auto_yes=opts.get("feedback_yes", False))
+        return True
+
+    if opts.get("feedback_mode"):
+        msg = " ".join(args)
+        send_terminal_feedback(msg, auto_yes=opts.get("feedback_yes", False))
+        return True
+
+    if first == "cache":
+        if len(args) == 1:
+            cache_status()
+            return True
+        sub = args[1].lower()
+        if sub in ("clear", "clean", "purge", "flush", "reset") and len(args) == 2:
+            cache_clear()
+            return True
+        if sub in ("status", "info") and len(args) == 2:
+            cache_status()
+            return True
+        if sub in ("off", "disable") and len(args) == 2:
+            cache_set_retention("0")
+            return True
+        if sub in ("on", "enable") and len(args) == 2:
+            cache_set_retention("3h")
+            return True
+        if sub in ("retention", "set"):
+            if len(args) > 2:
+                cache_set_retention(" ".join(args[2:]))
+            else:
+                cache_set_retention(None)
+            return True
+        cand_time = " ".join(args[1:])
+        try:
+            parse_retention(cand_time)
+            cache_set_retention(cand_time)
+            return True
+        except ValueError:
+            pass
+
+    if first == "auth":
+        if len(args) == 1:
+            auth_status()
+            return True
+        sub = args[1].lower()
+        if sub in ("login", "in") and len(args) == 2:
+            auth_login()
+            return True
+        if sub in ("logout", "out") and len(args) == 2:
+            auth_logout()
+            return True
+        if sub == "status" and len(args) == 2:
+            auth_status()
+            return True
+
+    if first in ("bash-history", "history-bash"):
+        sub = args[1].lower() if len(args) > 1 else "status"
+        set_bash_history_setting(sub)
+        return True
+
+    if first in ("history", "commands"):
+        filter_t = args[1] if len(args) > 1 else None
+        show_command_history(filter_term=filter_t)
+        return True
+
+    if first in ("model", "models"):
+        if len(args) == 1:
+            select_model_interactive()
+            return True
+        if len(args) >= 2:
+            sub = args[1].lower()
+            if sub == "check" and len(args) == 2:
+                check_all_models()
+                return True
+            if sub == "think":
+                cfg = load_config()
+                if len(args) >= 3:
+                    target_think = args[2].strip()
+                    cfg["think_model"] = target_think
+                    save_config(cfg)
+                    print(f"\n{GREEN}✓ Deep thinking model set to:{RESET} {BOLD}{CYAN}{target_think}{RESET}\n")
+                else:
+                    prov, mod, _ = resolve_deep_provider(cfg)
+                    print(f"\n{BOLD}Active Deep Thinking Model:{RESET} {CYAN}{prov}:{mod}{RESET}")
+                    print(f"{DIM}Set custom model via: {CYAN}how model think <provider:model>{RESET} (e.g. groq:deepseek-r1-distill-llama-70b, gemini:gemini-2.5-pro, anthropic:claude-3-7-sonnet-latest, cli:claude)\n")
+                return True
+            if len(args) == 2 and (sub.isdigit() or "/" in sub):
+                select_model_interactive(args[1])
+                return True
+
+    return False
+
 
 def main():
     if len(sys.argv) < 2:
@@ -1462,169 +2804,30 @@ def main():
         print_help()
         sys.exit(0)
 
-    # Podkomenda 'verbosity': how verbosity [poziom]
-    if raw_args[0].lower() in ("verbosity", "verbose"):
-        target_v = raw_args[1] if len(raw_args) > 1 else None
-        set_verbosity_interactive(target_v)
+    opts, args = parse_cli_args(raw_args)
+
+    if opts.get("version_requested"):
+        print(f"how {__version__}")
         sys.exit(0)
 
-    # Parsowanie flag (verbosity, clip, cache, feedback)
-    verbosity = None
-    copy_only = False
-    no_cache = False
-    custom_retention = None
-    feedback_mode = False
-    args = []
-    i = 0
-    while i < len(raw_args):
-        a = raw_args[i]
-        a_lower = a.lower()
-        if a_lower in ("--feedback", "--bug", "--issue", "--report"):
-            feedback_mode = True
-            i += 1
-        elif a_lower in ("-c", "--clip", "--copy"):
-            copy_only = True
-            i += 1
-        elif a_lower in ("-0", "--zero", "-q", "--quiet"):
-            verbosity = "zero"
-            i += 1
-        elif a_lower == "--low":
-            verbosity = "low"
-            i += 1
-        elif a_lower == "--normal":
-            verbosity = "normal"
-            i += 1
-        elif a_lower in ("-v", "--verbosity"):
-            if i + 1 < len(raw_args):
-                verbosity = raw_args[i + 1].lower()
-                i += 2
-            else:
-                print(f"{RED}✗ Provide verbosity level after {a} (zero, low, normal).{RESET}")
-                sys.exit(1)
-        elif a_lower.startswith("--verbosity="):
-            verbosity = a.split("=", 1)[1].lower()
-            i += 1
-        elif a_lower.startswith("-v="):
-            verbosity = a.split("=", 1)[1].lower()
-            i += 1
-        elif a_lower in ("--no-cache", "--fresh", "--refresh"):
-            no_cache = True
-            i += 1
-        elif a_lower in ("--retention", "--cache-retention"):
-            if i + 1 < len(raw_args):
-                custom_retention = raw_args[i + 1]
-                i += 2
-            else:
-                print(f"{RED}✗ Provide retention time after {a} (e.g. 30m, 3h, 7D, 1M).{RESET}")
-                sys.exit(1)
-        elif a_lower.startswith("--retention="):
-            custom_retention = a.split("=", 1)[1]
-            i += 1
-        elif a_lower.startswith("--cache-retention="):
-            custom_retention = a.split("=", 1)[1]
-            i += 1
-        else:
-            args.extend(raw_args[i:])
-            break
-
-    if not args:
+    if not args and not opts.get("feedback_mode"):
         print_help()
         sys.exit(0)
 
-    first = args[0].lower()
-
-    # Podkomenda self-test / test
-    if first in ("self-test", "test", "check-self"):
-        use_docker = any(x in args[1:] for x in ("--docker", "-d", "docker"))
-        auto_stats = any(x in args[1:] for x in ("--stats", "-s", "--ci"))
-        run_self_test(use_docker=use_docker, auto_stats=auto_stats)
+    if dispatch_subcommand(args, opts):
         sys.exit(0)
 
-    # Podkomenda feedback: how feedback [opcjonalny opis/zapytanie]
-    if first in ("feedback", "bug", "report", "issue"):
-        msg = " ".join(args[1:]) if len(args) > 1 else ""
-        send_terminal_feedback(msg)
-        sys.exit(0)
-
-    if feedback_mode:
-        send_terminal_feedback(" ".join(args))
-        sys.exit(0)
-
-    # Podkomendy 'cache'
-    if first == "cache":
-        if len(args) == 1:
-            cache_status()
-            sys.exit(0)
-        sub = args[1].lower()
-        if sub in ("clear", "clean", "purge", "flush", "reset") and len(args) == 2:
-            cache_clear()
-            sys.exit(0)
-        elif sub in ("status", "info") and len(args) == 2:
-            cache_status()
-            sys.exit(0)
-        elif sub in ("off", "disable", "wyłącz", "wylacz") and len(args) == 2:
-            cache_set_retention("0")
-            sys.exit(0)
-        elif sub in ("on", "enable", "włącz", "wlacz") and len(args) == 2:
-            cache_set_retention("3h")
-            sys.exit(0)
-        elif sub in ("retention", "set"):
-            if len(args) > 2:
-                cache_set_retention(" ".join(args[2:]))
-            else:
-                cache_set_retention(None)
-            sys.exit(0)
-        else:
-            cand_time = " ".join(args[1:])
-            try:
-                # Jeśli sparsuje się poprawnie jako czas, traktujemy jako ustawienie retencji
-                parse_retention(cand_time)
-                cache_set_retention(cand_time)
-                sys.exit(0)
-            except ValueError:
-                # To zapytanie użytkownika (np. 'how cache works on linux')
-                pass
-
-    # Uproszczone podkomendy 'auth': login, status, logout
-    if first == "auth":
-        if len(args) == 1:
-            auth_status()
-            sys.exit(0)
-        sub = args[1].lower()
-        if sub in ("login", "in") and len(args) == 2:
-            auth_login()
-            sys.exit(0)
-        elif sub in ("logout", "out") and len(args) == 2:
-            auth_logout()
-            sys.exit(0)
-        elif sub == "status" and len(args) == 2:
-            auth_status()
-            sys.exit(0)
-        # W przeciwnym razie to zapytanie użytkownika (np. 'how auth works on omarchy?')
-
-    # Skróty historii
-    if first in ("history", "commands"):
-        filter_t = args[1] if len(args) > 1 else None
-        show_command_history(filter_term=filter_t)
-        sys.exit(0)
-
-    # Administracyjne podkomendy 'model':
-    if first in ("model", "models"):
-        if len(args) == 1:
-            select_model_interactive()
-            sys.exit(0)
-        elif len(args) == 2:
-            sub = args[1].lower()
-            if sub == "check":
-                check_all_models()
-                sys.exit(0)
-            elif sub.isdigit() or "/" in sub:
-                select_model_interactive(args[1])
-                sys.exit(0)
-
-    # Cała reszta to zapytanie do asystenta
     query = " ".join(args)
-    ask_groq(query, copy_only=copy_only, verbosity=verbosity, no_cache=no_cache, custom_retention=custom_retention)
+    ask_groq(
+        query,
+        verbosity=opts.get("verbosity"),
+        no_cache=opts.get("no_cache", False),
+        custom_retention=opts.get("custom_retention"),
+        think_mode=opts.get("think_mode"),
+        no_context=opts.get("no_context", False),
+        force_context=opts.get("force_context", False),
+    )
+
 
 if __name__ == "__main__":
     main()
