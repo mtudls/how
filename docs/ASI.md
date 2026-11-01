@@ -2,6 +2,12 @@
 
 **Effect:** Every change to `how` is automatically checked for speed, accuracy, and security before it reaches you—locally via `how test` and in the cloud via GitHub Actions.
 
+| ASI Tier | Status | Effect (What happens) |
+| :--- | :---: | :--- |
+| **1. Human-Assisted Local Loop** (`how test`) | ✅ `LIVE` | Compares `[A] Baseline` vs `[B] WIP`, runs V&V + safety checks, and gives a pass/fail verdict. |
+| **2. Autonomous Cloud Reviewer** (`ai-architect.yml`) | 🟡 `ADVISORY` | Runs weekly on GitHub Actions, audits [`how`](../how) + V&V scores, and opens a GitHub Issue with proposals. |
+| **3. Closed-Loop Self-Patching** (`Code → Gate → PR`) | ⏳ `PLANNED` | Generates a patch, enforces hard V&V + latency gates, discards regressions, and opens a ready-to-merge PR. |
+
 ---
 
 ## 1. Local Self-Test (`how test`)

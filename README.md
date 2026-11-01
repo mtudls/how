@@ -151,6 +151,7 @@ how test [--stats]                # Run self-test and speed benchmark
 | ⏳ `v0.5` | **2. Repeat-Question Memory** | Detect when you ask the same question twice and ask if the previous command failed. |
 | ⏳ `v0.5` | **3. `where` + `om` Unified CLI** | Find *where* any file, config, log, or port is (`om where ...`) alongside `om how ...`. |
 | ⏳ `v0.5` | **4. Normie Safety Traffic Lights** | Label every command `🟢 Safe`, `🟡 Modifies files`, or `🔴 Destructive / Admin` in plain words. |
+| ⏳ `v0.5` | **5. Closed-Loop Autonomous ASI** | Automatically turn optimization ideas or broken model IDs into verified, benchmark-tested PRs. |
 
 ---
 
@@ -217,6 +218,29 @@ om !                                   # Action: preview & execute last suggeste
   - `🟡 Modifies files/packages` — edits configs or installs packages (`pacman -S`, `cp`, `sed -i`)
   - `🔴 Destructive / Admin` — deletes data or alters boot/disks (`rm -rf`, `dd`, `mkfs`); requires explicit confirmation in `how run`.
 - **Plain-English Flag Breakdown (`[PLANNED — v0.5]`):** Optional 1-line breakdown of each flag (`-r` = recursive, `-f` = force) so new Linux users learn naturally.
+
+</details>
+
+### ⏳ 5. Closed-Loop Autonomous Self-Improvement (ASI: `Code → Gate → PR`)
+**Planned Effect:** Instead of just opening advisory GitHub Issues, `how` will test its own optimization patches and only open a Pull Request when every quality, safety, and speed check passes.
+
+| ASI Tier | Status | Effect |
+| :--- | :---: | :--- |
+| **1. Human-Assisted Local Loop** (`how test`) | ✅ `LIVE` | Benchmarks `[A] Baseline` vs `[B] WIP`, runs V&V + safety checks, and gives a pass/fail verdict. |
+| **2. Autonomous Cloud Reviewer** (`ai-architect.yml`) | 🟡 `ADVISORY` | Runs weekly on GitHub Actions, analyzes [`how`](how) + V&V scores, and opens a GitHub Issue with proposals. |
+| **3. Closed-Loop Self-Patching** (`Code → Gate → PR`) | ⏳ `PLANNED` | Generates a patch, enforces hard V&V + latency gates, discards regressions, and opens a ready-to-merge PR. |
+
+<details>
+<summary><b>▸ Way / Form: Propose → Hard Gate → Verified PR pipeline</b></summary>
+
+1. **Propose (Bounded Diff):** [`scripts/ai_architect_review.py`](scripts/ai_architect_review.py) proposes a minimal SEARCH/REPLACE patch on [`how`](how) (or updates deprecated model IDs / adds regression tests from user `how feedback` issues).
+2. **Hard Verification Gate (Zero Human Trust Required):**
+   - Must transpile and compile via [`scripts/transpile_rust.py`](scripts/transpile_rust.py) with `0` errors.
+   - Must score **`100.0 / 100`** on [`tests/test_vv_suite.py`](tests/test_vv_suite.py).
+   - Must pass **100%** of [`tests/test_safety.py`](tests/test_safety.py) (sandbox, no `eval`/`exec`, no trailing whitespace).
+   - Must pass [`tests/test_ab_bench.py`](tests/test_ab_bench.py) (`Latency <= Baseline`).
+   - *If any gate fails, the patch is automatically reverted and discarded.*
+3. **Deliver (Verified PR):** Only when all 4 gates pass, pushes branch `asi/auto-<date>` and opens a Pull Request with the A/B benchmark table attached.
 
 </details>
 
