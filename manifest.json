@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy.how",
+  "name": "how",
+  "version": "0.3.0",
+  "description": "Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack.",
+  "author": "Mateusz Dzielinski",
+  "license": "MIT",
+  "kinds": [
+    "cli",
+    "agent"
+  ],
+  "entryPoints": {
+    "cli": "how"
+  }
+}

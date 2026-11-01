@@ -1,18 +1,18 @@
 # how
 
-> Instant Linux & Omarchy terminal commands from natural language. Zero runtime dependencies.
+> Fast, concise, direct CLI tool to learn **"how to do sht in ..."** — built for Omarchy, Linux & your local stack. Zero runtime dependencies.
 
 ---
 
-## What It Does
+## Why `how`?
 
-`how` translates natural language queries into copy-pasteable terminal commands directly inside your shell.
+`how` translates natural language into copy-pasteable terminal commands directly inside your shell:
 
-- **Instant Answers**: Sub-second streaming powered by Groq's LPU™ hardware.
-- **Developer-Friendly**: $0 free API access provided by Groq (no credit card required). Kudos to Jonathan Ross & team!
-- **Strict Verification**: If uncertain, answers strictly with `"I don't know"` — no hallucinated syntax.
-- **Sliding Cache**: Repeated commands return in <1ms and extend their TTL on hit (`[cache]`).
-- **Terminal Feedback**: Report broken commands or send suggestions directly from your terminal.
+- **Sub-Second Speed**: Instant answers streamed via Groq LPU™ hardware, with `<30ms` cold CLI startup and `<1ms` SQLite WAL cache hits (`[cache]`).
+- **Permission-Gated Environment & Stack Discovery**: Optionally detects your exact OS, Omarchy/Hyprland version, package manager, and the current directory's software stack (`uv`, `Cargo`, `pnpm`, `Bun`, `Rails`, `Go`, `Docker`) so `how to run single test` gives the exact command for *your* project.
+- **Groq Triage + Deep Thinking Tier**: Fast lookups resolve instantly on Groq; complex troubleshooting or multi-step debugging is automatically triaged to a slower, higher-reasoning model (`--think` / `-t`), supporting Groq Reasoning (`DeepSeek-R1` / `QwQ`), Gemini, Claude, OpenAI, OpenRouter, or local CLI agents (`claude`, `gemini`, `codex`).
+- **Strict Honesty**: Never hallucinates flags — if uncertain, replies strictly with `"I don't know"`.
+- **Sandboxed Local RAG**: Reads `# omarchy:*` script headers, `tldr`, `man`, and `bwrap`-isolated `--help` output automatically.
 
 ---
 
@@ -23,67 +23,76 @@ curl -fsSL https://raw.githubusercontent.com/mdsyseng/how/main/install.sh | bash
 how auth login  # Free key: console.groq.com/keys
 ```
 
-Or manual link:
+Or manual symlink:
 ```bash
-git clone https://github.com/mdsyseng/how.git ~/.local/share/how && ln -s ~/.local/share/how/how ~/.local/bin/how
+git clone https://github.com/mdsyseng/how.git ~/.local/share/how && ln -sf ~/.local/share/how/how ~/.local/bin/how
 ```
 
 ---
 
-## Everyday Commands
+## Everyday Usage
 
 ```bash
-# Ask how to accomplish tasks
-how to ping google
-how to convert mov to mp4 with ffmpeg
+# Instant Omarchy & Linux commands
+how to switch audio output in omarchy
+how to unlock user after failed sudo tries
 how to switch gh user without logout
 
-# Command-only output (clean, no explanations)
+# Stack-aware commands in your project folder
+how to run a single test file
+how to check outdated dependencies
+
+# Command-only output (clean, zero explanation)
 how -0 to find largest files in current directory
 how --low to reload hyprland
 
-# Force fresh response or override cache retention
-how --no-cache to check open ports
-how --retention 1M to install postgres on arch
-
-# Send feedback directly from terminal
-how feedback "pipewire switch command failed"
+# Force deep thinking for complex debugging or architecture
+how -t to fix limine secure boot black screen
+how triage why is my trackpad freezing after suspend
 ```
 
 ---
 
-## Configuration
-
-Adjust behavior and retention preferences:
+## Context, Triage & Configuration
 
 ```bash
-# Model selection & latency test
-how model
-how model check
+# Permission-gated OS & project stack discovery
+how context                 # View permissions & detected OS / project stack
+how context on              # Enable both OS and directory stack discovery
+how context os on           # Toggle OS/version profile discovery only
+how context stack on        # Toggle current-directory stack discovery only
 
-# Output verbosity (zero, low, normal)
+# Question triage & Deep Thinking model configuration
+how triage                  # View triage & deep-thinking configuration
+how triage on               # Enable automatic Groq question triage
+how model                   # Select or latency-test fast Groq models
+how model check             # Benchmark all available Groq models
+how model think gemini:gemini-2.5-pro  # Configure deep-thinking provider
+
+# Output verbosity & sliding cache (m = minutes, h = hours, D = days, M = months)
 how verbosity zero
-
-# Cache control (m = minutes, h = hours, D = days, M = months)
 how cache retention 7D
 how cache clear
+
+# Terminal feedback
+how feedback "pipewire sink switch command failed"
 ```
 
 Paths:
-- Config: `~/.config/how/config.json`
-- Cache: `~/.cache/how/cache.db` (SQLite3)
+- Config: `~/.config/how/config.json` (permissions `0600`)
+- Cache: `~/.cache/how/cache.db` (SQLite3 WAL)
 
 ---
 
-## Verification & ASI (Automated Self-Improvement)
-
-Run tests locally or review autonomous improvement guidelines in [docs/ASI.md](docs/ASI.md):
+## Verification & Automated Self-Improvement (ASI)
 
 ```bash
-how test  # Built-in self-test (runs A/B comparison against installed binary)
-python3 tests/test_vv_suite.py  # Native V&V benchmark suite (<1s)
-docker run --rm $(docker build -q -f tests/Dockerfile .)  # Clean container audit
+how test                        # Built-in self-test & A/B benchmark matrix
+python3 tests/test_vv_suite.py  # Fast V&V behavioral & latency suite
+python3 tests/test_safety.py    # Sandbox & security unit tests
 ```
+
+See [docs/ASI.md](docs/ASI.md) for details on the A/B benchmarking matrix and autonomous review workflow.
 
 ---
 
