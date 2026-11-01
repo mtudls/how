@@ -3,17 +3,22 @@ run-name: "Quality: ${{ github.event.head_commit.message || github.ref_name }}"
 
 on:
   push:
-    branches: [main]
+    branches: [main, argon]
   pull_request:
-    branches: [main]
+    branches: [main, argon]
 
 permissions:
   contents: read
 
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
-    name: Quality check
+    name: Quality check (Ruff, Flake8, ShellCheck)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,12 +26,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Syntax compile check
+      - name: Syntax compile & ShellCheck
         run: |
-          python -m py_compile how tests/test_vv_suite.py tests/test_safety.py tests/test_ab_bench.py scripts/ai_architect_review.py
+          python -m py_compile how scripts/transpile_rust.py scripts/ai_architect_review.py tests/test_vv_suite.py tests/test_safety.py tests/test_ab_bench.py
           bash -n install.sh
+          shellcheck install.sh
 
       - name: Install Ruff & Flake8
         run: |
@@ -34,5 +40,5 @@ jobs:
 
       - name: Lint checks
         run: |
-          ruff check how
-          flake8 how --max-line-length=120 --extend-ignore=E501,E402,E722,F401,F841,E302,E305
+          ruff check how scripts/transpile_rust.py scripts/ai_architect_review.py tests/
+          flake8 how scripts/transpile_rust.py scripts/ai_architect_review.py tests/ --max-line-length=130 --extend-ignore=E501,E402,E722,F401,F841,E302,E305

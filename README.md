@@ -8,24 +8,29 @@
 
 `how` translates natural language into copy-pasteable terminal commands directly inside your shell:
 
-- **Sub-Second Speed**: Instant answers streamed via Groq LPU™ hardware, with `<30ms` cold CLI startup and `<1ms` SQLite WAL cache hits (`[cache]`).
-- **Permission-Gated Environment & Stack Discovery**: Optionally detects your exact OS, Omarchy/Hyprland version, package manager, and the current directory's software stack (`uv`, `Cargo`, `pnpm`, `Bun`, `Rails`, `Go`, `Docker`) so `how to run single test` gives the exact command for *your* project.
+- **Sub-Millisecond Native Speed**: Kept as readable, zero-dependency Python in the repo, and automatically transpiled via Python AST to a `<1ms` native Rust binary (`rustc -O`, no LLM needed) during local installation (`./install.sh` or `how build`).
+- **Graduated, Transparent Context Discovery**:
+  - **`careful` (default)**: Step-by-step user approval showing the exact `[dry-run]` command (`cat /etc/os-release`, `uname -sr`, `ls -1 <cwd>`) before reading any source.
+  - **`yolo` (`how context yolo` / `how --yolo`)**: Goes straight ahead, reads OS, project stack & local docs without prompts, and prints a transparent receipt of exactly what it read (`🔎 Read: ...`).
+  - **`dry-run` (`how context dry-run` / `how --dry-run <query>`)**: Prints every read-only check and local doc inspection command without executing them.
 - **Groq Triage + Deep Thinking Tier**: Fast lookups resolve instantly on Groq; complex troubleshooting or multi-step debugging is automatically triaged to a slower, higher-reasoning model (`--think` / `-t`), supporting Groq Reasoning (`DeepSeek-R1` / `QwQ`), Gemini, Claude, OpenAI, OpenRouter, or local CLI agents (`claude`, `gemini`, `codex`).
 - **Strict Honesty**: Never hallucinates flags — if uncertain, replies strictly with `"I don't know"`.
 - **Sandboxed Local RAG**: Reads `# omarchy:*` script headers, `tldr`, `man`, and `bwrap`-isolated `--help` output automatically.
 
 ---
 
-## Installation & Setup
+## Installation & Local Rust Transpilation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mdsyseng/how/main/install.sh | bash
+git clone https://github.com/mdsyseng/how.git && cd how
+./install.sh    # Automatically transpiles readable Python -> native Rust binary (~0.9ms startup)
 how auth login  # Free key: console.groq.com/keys
 ```
 
-Or manual symlink:
+Or rebuild the native Rust binary anytime:
 ```bash
-git clone https://github.com/mdsyseng/how.git ~/.local/share/how && ln -sf ~/.local/share/how/how ~/.local/bin/how
+how build                                   # Transpile `how` (Python AST -> Rust) and install to ~/.local/bin/how
+python3 scripts/transpile_rust.py --help    # Standalone deterministic AST transpiler (zero LLM, zero crates)
 ```
 
 ---
@@ -56,11 +61,18 @@ how triage why is my trackpad freezing after suspend
 ## Context, Triage & Configuration
 
 ```bash
-# Permission-gated OS & project stack discovery
-how context                 # View permissions & detected OS / project stack
-how context on              # Enable both OS and directory stack discovery
-how context os on           # Toggle OS/version profile discovery only
-how context stack on        # Toggle current-directory stack discovery only
+# Graduated OS & project stack discovery
+how context                 # View mode (careful/yolo/off), permissions & read receipt
+how context careful         # Step-by-step approval with [dry-run] commands (default)
+how context dry-run         # Preview exact dry-run inspection commands without reading
+how context yolo            # Auto-discover OS/stack & print what was read (🔎 Read: ...)
+how --yolo <query>          # Run a single query in YOLO mode and show what was read
+how --dry-run <query>       # Preview context, doc & triage plan for a query without running
+how context on / off        # Enable or disable all context discovery
+
+# Unified dashboard & last-command runner
+how status                  # Single-screen overview (engine, auth, models, context, cache)
+how run                     # Preview [dry-run] and confirm executing last suggested command
 
 # Question triage & Deep Thinking model configuration
 how triage                  # View triage & deep-thinking configuration

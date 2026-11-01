@@ -14,6 +14,7 @@ jobs:
   release:
     name: Build & Publish Release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,17 +22,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Validate syntax and V&V tests
+      - name: Validate syntax, V&V, Safety & Rust Transpilation
         run: |
-          python -m py_compile how
+          python -m py_compile how scripts/transpile_rust.py
           python tests/test_vv_suite.py
+          python tests/test_safety.py -v
           bash -n install.sh
+          python3 scripts/transpile_rust.py how -o how-linux-x86_64
+          ./how-linux-x86_64 --version
 
       - name: Generate SHA256 Checksums
         run: |
-          sha256sum how install.sh > SHA256SUMS.txt
+          sha256sum how how-linux-x86_64 install.sh manifest.json > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -39,7 +43,9 @@ jobs:
         with:
           files: |
             how
+            how-linux-x86_64
             install.sh
+            manifest.json
             SHA256SUMS.txt
           generate_release_notes: true
           draft: false

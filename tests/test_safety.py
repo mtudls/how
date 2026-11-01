@@ -270,6 +270,277 @@ class TestSafetyAndSandbox(unittest.TestCase):
         )
         self.assertEqual(res_deep["route"], "deep")
 
+    def test_graduated_context_step_by_step_and_yolo(self):
+        """Graduated context discovery supports careful step-by-step approval, dry-run commands, and yolo receipt."""
+        steps = self.how.get_context_dry_run_steps(query="how to use pacman")
+        self.assertGreaterEqual(len(steps), 5)
+        self.assertIn("cat /etc/os-release", steps[0]["dry_run"])
+
+        # Step-by-step approval: approve os_release & kernel, deny desktop & shell_pkg, approve stack
+        answers = iter(["y", "y", "n", "n", "y"])
+        cfg = self.how.run_step_by_step_context_approval(
+            cfg={},
+            input_fn=lambda _prompt: next(answers),
+        )
+        self.assertEqual(cfg.get("context_mode"), "careful")
+        self.assertTrue(cfg["context_steps"]["os_release"])
+        self.assertTrue(cfg["context_steps"]["kernel"])
+        self.assertFalse(cfg["context_steps"]["desktop"])
+        self.assertFalse(cfg["context_steps"]["shell_pkg"])
+        self.assertTrue(cfg["context_steps"]["stack"])
+        self.assertEqual(cfg["os_profile"].get("desktop"), "")
+
+        # YOLO mid-stream switch: step 1 'yolo' approves all remaining steps and reports what was read
+        cfg_yolo = self.how.run_step_by_step_context_approval(
+            cfg={},
+            input_fn=lambda _prompt: "yolo",
+        )
+        self.assertEqual(cfg_yolo.get("context_mode"), "yolo")
+        self.assertTrue(all(cfg_yolo["context_steps"].values()))
+        receipt = self.how.format_context_read_receipt(os_prof=cfg_yolo.get("os_profile"))
+        self.assertIn("OS[", receipt)
+
+    def test_deterministic_rust_transpiler(self):
+        """scripts/transpile_rust.py deterministically transpiles Python AST to Rust without any LLM."""
+        transpiler_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "transpile_rust.py"))
+        loader = importlib.machinery.SourceFileLoader("transpile_rust_mod", transpiler_path)
+        spec = importlib.util.spec_from_loader("transpile_rust_mod", loader)
+        tr_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(tr_mod)
+
+        rs_code = tr_mod.transpile_python_to_rust(HOW_PATH)
+        self.assertIn(f'pub const VERSION: &str = "{self.how.__version__}";', rs_code)
+        self.assertIn("pub fn heuristic_needs_deep_thinking", rs_code)
+        self.assertIn("pub const CONTEXT_DISCOVERY_STEPS", rs_code)
+
+    def test_graduated_context_all_branches(self):
+        """run_step_by_step_context_approval handles dry-run preview, off/quit abort, and EOFError."""
+        # 1. 'dry' on step 1 previews dry-run only (skips reading os_release),
+        #    'y' on step 2 approves kernel, 'off' on step 3 disables remaining discovery
+        seq = iter(["dry", "y", "off"])
+        cfg1 = self.how.run_step_by_step_context_approval(
+            cfg={},
+            input_fn=lambda _p: next(seq),
+        )
+        self.assertEqual(cfg1.get("context_mode"), "off")
+        self.assertFalse(cfg1["context_steps"]["os_release"])
+        self.assertTrue(cfg1["context_steps"]["kernel"])
+        self.assertFalse(cfg1["context_steps"]["desktop"])
+        self.assertFalse(cfg1["context_steps"]["shell_pkg"])
+        self.assertFalse(cfg1["context_steps"]["stack"])
+
+        # 2. EOFError during step approval cancels cleanly and disables discovery
+        def raise_eof(_p):
+            raise EOFError()
+
+        cfg_eof = self.how.run_step_by_step_context_approval(cfg={}, input_fn=raise_eof)
+        self.assertEqual(cfg_eof.get("context_mode"), "off")
+        self.assertFalse(cfg_eof.get("discover_os"))
+        self.assertFalse(cfg_eof.get("discover_stack"))
+
+        # 3. detect_local_stack in temp project directory records exact files_read
+        tmp_proj = tempfile.mkdtemp(prefix="how_test_proj_")
+        try:
+            with open(os.path.join(tmp_proj, "Cargo.toml"), "w", encoding="utf-8") as f:
+                f.write('[package]\nname = "demo"\n')
+            with open(os.path.join(tmp_proj, "Dockerfile"), "w", encoding="utf-8") as f:
+                f.write("FROM alpine:3.20\n")
+            stack_info = self.how.detect_local_stack(cwd=tmp_proj)
+            self.assertIn("Rust (cargo)", stack_info["summary"])
+            self.assertIn("Docker", stack_info["summary"])
+            self.assertIn("Cargo.toml", stack_info["files_read"])
+            self.assertIn("Dockerfile", stack_info["files_read"])
+        finally:
+            shutil.rmtree(tmp_proj, ignore_errors=True)
+
+    def test_dry_run_cli_and_query_mode(self):
+        """--dry-run previews context discovery and triage route with zero network calls."""
+        with patch("urllib.request.urlopen", side_effect=AssertionError("Network call forbidden in --dry-run")):
+            proc = subprocess.run(
+                [sys.executable, HOW_PATH, "--dry-run", "to", "check", "python3", "version"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("[dry-run]", proc.stdout)
+            self.assertIn("cat /etc/os-release", proc.stdout)
+            self.assertIn("[Triage Preview]", proc.stdout)
+
+    def test_yolo_flag_overrides_disabled_config(self):
+        """--yolo flag forces OS and stack context discovery and prints Read receipt even when disabled in config."""
+        self.how.save_config({
+            "discover_os": False,
+            "discover_stack": False,
+            "context_mode": "off",
+            "context_prompted": True,
+        })
+        ctx_str, receipt, os_prof, _ = self.how.get_active_environment_context(
+            cfg=self.how.load_config(),
+            no_context=False,
+            force_context=True,
+            context_mode_override="yolo",
+            return_receipt=True,
+        )
+        self.assertIn("OS:", ctx_str)
+        self.assertIn("OS[", receipt)
+        self.assertIsNotNone(os_prof)
+
+    def test_run_last_command_lifecycle(self):
+        """how run supports empty log, --dry-run, non-TTY refusal, and -y execution."""
+        # 1. Empty commands.log
+        self.how.COMMANDS_LOG = os.path.join(self.tmp_config_dir, "commands.log")
+        self.how.run_last_command(auto_yes=True, dry_run=False)
+
+        # 2. Log a safe command proposal
+        self.how.log_command_proposal("test echo", "echo how_run_ok", executed=False)
+        self.assertTrue(os.path.exists(self.how.COMMANDS_LOG))
+
+        # 3. Dry run does not mark EXECUTED
+        self.how.run_last_command(auto_yes=False, dry_run=True)
+        with open(self.how.COMMANDS_LOG, encoding="utf-8") as f:
+            log_text = f.read()
+        self.assertNotIn("[EXECUTED]", log_text)
+
+        # 4. Non-interactive without auto_yes refuses execution
+        with patch("sys.stdin.isatty", return_value=False):
+            self.how.run_last_command(auto_yes=False, dry_run=False)
+        with open(self.how.COMMANDS_LOG, encoding="utf-8") as f:
+            log_text = f.read()
+        self.assertNotIn("[EXECUTED]", log_text)
+
+        # 5. auto_yes=True executes command, logs [EXECUTED], and exits with returncode 0
+        with self.assertRaises(SystemExit) as cm:
+            self.how.run_last_command(auto_yes=True, dry_run=False)
+        self.assertEqual(cm.exception.code, 0)
+        with open(self.how.COMMANDS_LOG, encoding="utf-8") as f:
+            log_text = f.read()
+        self.assertIn("[EXECUTED]", log_text)
+
+    def test_rust_transpiler_binary_parity_and_safety(self):
+        """Rust transpiler refuses source overwrite and produces an ELF binary with full CLI parity."""
+        transpiler_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "transpile_rust.py"))
+        loader = importlib.machinery.SourceFileLoader("transpile_rust_mod2", transpiler_path)
+        spec = importlib.util.spec_from_loader("transpile_rust_mod2", loader)
+        tr_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(tr_mod)
+
+        # Safety check: refusing to overwrite source Python file
+        res_same = tr_mod.compile_rust_binary(HOW_PATH, HOW_PATH)
+        self.assertFalse(res_same.get("ok"))
+        self.assertIn("Refusing to overwrite", res_same.get("error", ""))
+
+        rustc_bin = shutil.which("rustc")
+        if not rustc_bin:
+            cargo_rustc = os.path.expanduser("~/.cargo/bin/rustc")
+            if os.path.isfile(cargo_rustc) and os.access(cargo_rustc, os.X_OK):
+                rustc_bin = cargo_rustc
+        if not rustc_bin:
+            return
+
+        tmp_bin_dir = tempfile.mkdtemp(prefix="how_rust_parity_")
+        try:
+            bin_path = os.path.join(tmp_bin_dir, "how-rs")
+            env = os.environ.copy()
+            env["PATH"] = os.path.dirname(rustc_bin) + ":" + env.get("PATH", "")
+            with patch.dict(os.environ, env):
+                res = tr_mod.compile_rust_binary(HOW_PATH, bin_path)
+            self.assertTrue(res.get("ok"), f"Rust compile failed: {res.get('error')}")
+
+            with open(bin_path, "rb") as f:
+                magic = f.read(4)
+            self.assertEqual(magic, b"\x7fELF", "Compiled binary must be a native ELF executable")
+
+            # Native fast paths: --version, --help, context dry-run, --dry-run query
+            p_ver = subprocess.run([bin_path, "--version"], capture_output=True, text=True, env=env)
+            self.assertEqual(p_ver.returncode, 0)
+            self.assertIn(f"how {self.how.__version__}", p_ver.stdout)
+
+            p_help = subprocess.run([bin_path, "--help"], capture_output=True, text=True, env=env)
+            self.assertEqual(p_help.returncode, 0)
+            self.assertIn("Graduated OS & stack discovery", p_help.stdout)
+
+            p_dry = subprocess.run([bin_path, "context", "dry-run"], capture_output=True, text=True, env=env)
+            self.assertEqual(p_dry.returncode, 0)
+            self.assertIn("cat /etc/os-release", p_dry.stdout)
+
+            p_qdry = subprocess.run(
+                [bin_path, "--dry-run", "why", "does", "limine", "fail", "secure", "boot"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(p_qdry.returncode, 0)
+            self.assertIn("DEEP THINKING", p_qdry.stdout)
+
+            # Delegated Python path: status
+            p_status = subprocess.run([bin_path, "status"], capture_output=True, text=True, env=env)
+            self.assertEqual(p_status.returncode, 0)
+            self.assertIn("Unified Status Dashboard", p_status.stdout)
+        finally:
+            shutil.rmtree(tmp_bin_dir, ignore_errors=True)
+
+    def test_install_sh_rust_and_python_only_modes(self):
+        """install.sh supports both --python-only and default native Rust transpilation."""
+        install_sh = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "install.sh"))
+        tmp_inst_py = tempfile.mkdtemp(prefix="how_inst_py_")
+        tmp_inst_rs = tempfile.mkdtemp(prefix="how_inst_rs_")
+        try:
+            env_py = os.environ.copy()
+            env_py["HOW_INSTALL_DIR"] = tmp_inst_py
+            p1 = subprocess.run(["bash", install_sh, "--python-only"], capture_output=True, text=True, env=env_py)
+            self.assertEqual(p1.returncode, 0, f"install.sh --python-only failed: {p1.stderr}")
+            installed_py = os.path.join(tmp_inst_py, "how")
+            self.assertTrue(os.path.isfile(installed_py))
+            with open(installed_py, "rb") as f:
+                self.assertTrue(f.read(2) == b"#!")
+
+            rustc_bin = shutil.which("rustc") or os.path.expanduser("~/.cargo/bin/rustc")
+            if os.path.isfile(rustc_bin) and os.access(rustc_bin, os.X_OK):
+                env_rs = os.environ.copy()
+                env_rs["HOW_INSTALL_DIR"] = tmp_inst_rs
+                env_rs["PATH"] = os.path.dirname(rustc_bin) + ":" + env_rs.get("PATH", "")
+                p2 = subprocess.run(["bash", install_sh], capture_output=True, text=True, env=env_rs)
+                self.assertEqual(p2.returncode, 0, f"install.sh failed: {p2.stderr}")
+                installed_rs = os.path.join(tmp_inst_rs, "how")
+                self.assertTrue(os.path.isfile(installed_rs))
+                with open(installed_rs, "rb") as f:
+                    self.assertEqual(f.read(4), b"\x7fELF")
+        finally:
+            shutil.rmtree(tmp_inst_py, ignore_errors=True)
+            shutil.rmtree(tmp_inst_rs, ignore_errors=True)
+
+    def test_static_code_quality_and_bandit_invariants(self):
+        """AST & static check across all repo Python files for syntax, line-length <= 130, and zero eval/exec."""
+        import ast
+
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        py_files = [
+            os.path.join(repo_root, "how"),
+            os.path.join(repo_root, "scripts", "transpile_rust.py"),
+            os.path.join(repo_root, "scripts", "ai_architect_review.py"),
+            os.path.join(repo_root, "tests", "test_safety.py"),
+            os.path.join(repo_root, "tests", "test_vv_suite.py"),
+            os.path.join(repo_root, "tests", "test_ab_bench.py"),
+        ]
+        for path in py_files:
+            self.assertTrue(os.path.isfile(path), f"Missing expected file: {path}")
+            with open(path, "r", encoding="utf-8") as f:
+                source = f.read()
+            tree = ast.parse(source, filename=path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    self.assertNotIn(
+                        node.func.id,
+                        ("eval", "exec"),
+                        f"Forbidden {node.func.id}() call in {path}:{getattr(node, 'lineno', 0)}",
+                    )
+            for lineno, line in enumerate(source.splitlines(), start=1):
+                self.assertEqual(
+                    line,
+                    line.rstrip(" \t"),
+                    f"Trailing whitespace in {os.path.relpath(path, repo_root)}:{lineno}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,17 +3,22 @@ run-name: "V&V: ${{ github.event.head_commit.message || github.ref_name }}"
 
 on:
   push:
-    branches: [main]
+    branches: [main, argon]
   pull_request:
-    branches: [main]
+    branches: [main, argon]
 
 permissions:
   contents: read
 
+concurrency:
+  group: vv-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  performance:
-    name: Performance check
+  verify:
+    name: V&V, Safety & Rust Transpilation Suite
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,25 +26,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
-      - name: Benchmark CLI startup latency
+      - name: Run 4-Axis V&V Suite (Performance, RAG/Cache, Behavior, Safety)
         run: |
-          python3 -c "import tests.test_vv_suite as t; t.test_performance()"
+          chmod +x how install.sh scripts/transpile_rust.py
+          python3 tests/test_vv_suite.py
 
-  function:
-    name: Function check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Verify CLI behavior, prompts & safety filters
+      - name: Run Safety, Sandbox, Graduated Context & Rust Parity Unit Tests
         run: |
-          python3 -c "import tests.test_vv_suite as t; t.test_cache_behavior(); t.test_behavior_and_edge_cases()"
-          python3 tests/test_safety.py
+          python3 tests/test_safety.py -v
+
+      - name: Verify Native Rust Transpilation & Installer Modes
+        run: |
+          python3 scripts/transpile_rust.py how -o /tmp/how-rs
+          /tmp/how-rs --version
+          /tmp/how-rs context dry-run
+          HOW_INSTALL_DIR=/tmp/how-inst-rs ./install.sh
+          /tmp/how-inst-rs/how --version
+          HOW_INSTALL_DIR=/tmp/how-inst-py ./install.sh --python-only
+          /tmp/how-inst-py/how --version

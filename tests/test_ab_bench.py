@@ -70,6 +70,14 @@ def color_diff(val_diff_percent, text=None):
 
     return rgb_ansi(r, g, b, text)
 
+def is_elf_binary(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except Exception:
+        return False
+
+
 def run_single_benchmark(exec_path, extra_env=None):
     """Executes a single invocation measuring cold startup latency in milliseconds."""
     env = os.environ.copy()
@@ -78,9 +86,10 @@ def run_single_benchmark(exec_path, extra_env=None):
     if extra_env:
         env.update(extra_env)
 
+    cmd = [exec_path, "--help"] if is_elf_binary(exec_path) else [sys.executable, exec_path, "--help"]
     t0 = time.perf_counter()
     res = subprocess.run(
-        [sys.executable, exec_path, "--help"],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -101,6 +110,7 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
     installed_label = ""
     baseline_bytes = None
     baseline_temp_file = None
+    native_rust_bin = None
 
     path_env = os.environ.get("PATH", "")
     found_bin = None
@@ -110,12 +120,15 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
             found_bin = cand
             break
 
-    if found_bin and os.path.realpath(found_bin) != wip_path:
+    if found_bin and is_elf_binary(found_bin):
+        native_rust_bin = found_bin
+
+    if found_bin and os.path.realpath(found_bin) != wip_path and not is_elf_binary(found_bin):
         installed_label = found_bin
         with open(found_bin, "rb") as f:
             baseline_bytes = f.read()
     else:
-        # Symlinked or same file: extract git HEAD as baseline
+        # Symlinked, same file, or native ELF binary installed: extract git HEAD as Python baseline
         try:
             git_res = subprocess.run(
                 ["git", "-C", repo_root, "show", "HEAD:how"],
@@ -142,14 +155,18 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
         print(f"  Target: {wip_path} {DIM}(sha: {wip_hash[:8]}...){RESET}\n")
         lat, ok = run_single_benchmark(wip_path)
         score = max(0, min(100, 100 - (lat - 30) * 0.7)) if lat > 30 else 100
-        print(f"  • Startup Latency:    {lat:.2f} ms")
-        print(f"  • Performance Score:  {score:.1f}/100")
-        
+        print(f"  • Startup Latency (Python): {lat:.2f} ms")
+        if native_rust_bin:
+            rust_lat, _ = run_single_benchmark(native_rust_bin)
+            speedup = lat / rust_lat if rust_lat > 0 else 1.0
+            print(f"  • Startup Latency (Rust):   {GREEN}{rust_lat:.2f} ms{RESET} {DIM}({speedup:.1f}x faster via {native_rust_bin}){RESET}")
+        print(f"  • Performance Score:        {score:.1f}/100")
+
         # Behavioral V&V
         test_script = os.path.join(repo_root, "tests", "test_vv_suite.py")
         if os.path.exists(test_script):
             vv_res = subprocess.run([sys.executable, test_script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            print(f"  • Behavioral V&V:     {GREEN}✓ 100% Passed{RESET}" if vv_res.returncode == 0 else f"  • Behavioral V&V:     {RED}✗ Failed{RESET}")
+            print(f"  • Behavioral V&V:           {GREEN}✓ 100% Passed{RESET}" if vv_res.returncode == 0 else f"  • Behavioral V&V:           {RED}✗ Failed{RESET}")
         print()
         return
 
@@ -166,11 +183,33 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
     os.chmod(tmp_a.name, 0o700)
     baseline_temp_file = tmp_a.name
 
+    wip_bench_target = wip_path
+    wip_rust_temp = None
+    transpiler_script = os.path.join(repo_root, "scripts", "transpile_rust.py")
+    if os.path.exists(transpiler_script):
+        try:
+            import importlib.machinery
+            import importlib.util
+            loader = importlib.machinery.SourceFileLoader("tr_ab_mod", transpiler_script)
+            spec = importlib.util.spec_from_loader("tr_ab_mod", loader)
+            tr_mod = importlib.util.module_from_spec(spec)
+            loader.exec_module(tr_mod)
+            tmp_rs_bin = tempfile.NamedTemporaryFile("wb", delete=False, suffix="_how_rs")
+            tmp_rs_bin.close()
+            comp = tr_mod.compile_rust_binary(wip_path, tmp_rs_bin.name)
+            if comp.get("ok"):
+                wip_rust_temp = tmp_rs_bin.name
+                wip_bench_target = wip_rust_temp
+            else:
+                os.remove(tmp_rs_bin.name)
+        except Exception:
+            pass
+
     try:
         # Phase 1: Sanity Check (1 iteration, interleaved)
         print(f"{BOLD}Phase 1: Initial Sanity Check (1 round){RESET}")
         lat_a, ok_a = run_single_benchmark(baseline_temp_file)
-        lat_b, ok_b = run_single_benchmark(wip_path)
+        lat_b, ok_b = run_single_benchmark(wip_bench_target)
 
         diff_p1 = ((lat_a - lat_b) / lat_a) * 100 if lat_a else 0
         diff_str_p1 = color_diff(diff_p1)
@@ -218,9 +257,9 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
             for i in range(1, 11):
                 if i % 2 == 1:
                     t_a, _ = run_single_benchmark(baseline_temp_file)
-                    t_b, _ = run_single_benchmark(wip_path)
+                    t_b, _ = run_single_benchmark(wip_bench_target)
                 else:
-                    t_b, _ = run_single_benchmark(wip_path)
+                    t_b, _ = run_single_benchmark(wip_bench_target)
                     t_a, _ = run_single_benchmark(baseline_temp_file)
 
                 samples_a.append(t_a)
@@ -251,11 +290,12 @@ def run_ab_bench(wip_path=None, auto_run_stats=False):
             print(f"  {CYAN}gh pr create --fill --web{RESET}\n")
 
     finally:
-        if baseline_temp_file and os.path.exists(baseline_temp_file):
-            try:
-                os.remove(baseline_temp_file)
-            except Exception:
-                pass
+        for tmp_f in (baseline_temp_file, wip_rust_temp):
+            if tmp_f and os.path.exists(tmp_f):
+                try:
+                    os.remove(tmp_f)
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
     auto = "--stats" in sys.argv or "-s" in sys.argv or "--ci" in sys.argv

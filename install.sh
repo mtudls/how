@@ -56,13 +56,26 @@ BIN_DIR="${HOW_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$BIN_DIR"
 TARGET="$BIN_DIR/how"
 
-# 3. Source detection: local repo or GitHub download
+# 3. Source detection: local repo (with automatic Python -> Rust transpilation) or GitHub download
 REPO_RAW_URL="https://raw.githubusercontent.com/mdsyseng/how/main/how"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+PYTHON_ONLY="${HOW_PYTHON_ONLY:-0}"
+for arg in "$@"; do
+  if [ "$arg" = "--python-only" ]; then
+    PYTHON_ONLY="1"
+  fi
+done
 
+RUST_TRANSPILED=0
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/how" ]; then
-  # Local copy if running inside cloned repository
-  if [ "$SCRIPT_DIR/how" != "$TARGET" ]; then
+  if [ "$PYTHON_ONLY" != "1" ] && [ -f "$SCRIPT_DIR/scripts/transpile_rust.py" ] && (command -v rustc >/dev/null 2>&1 || [ -x "$HOME/.cargo/bin/rustc" ]); then
+    if python3 "$SCRIPT_DIR/scripts/transpile_rust.py" "$SCRIPT_DIR/how" -o "$TARGET.tmp"; then
+      RUST_TRANSPILED=1
+    else
+      warn "Rust transpilation failed, falling back to Python script installation."
+    fi
+  fi
+  if [ "$RUST_TRANSPILED" = "0" ] && [ "$SCRIPT_DIR/how" != "$TARGET" ]; then
     cp "$SCRIPT_DIR/how" "$TARGET.tmp"
   fi
 else
@@ -82,6 +95,9 @@ if [ -f "$TARGET.tmp" ]; then
     abort "Installed binary file is empty."
   fi
   chmod +x "$TARGET.tmp"
+  if [ -L "$TARGET" ]; then
+    rm -f "$TARGET"
+  fi
   mv -f "$TARGET.tmp" "$TARGET"
 else
   chmod +x "$TARGET"
@@ -92,7 +108,11 @@ if ! "$TARGET" --help >/dev/null 2>&1; then
   abort "Installation verification failed ($TARGET --help failed)."
 fi
 
-success "Installed how to $TARGET"
+if [ "$RUST_TRANSPILED" = "1" ]; then
+  success "Installed how (native Rust transpiled binary) to $TARGET (Python source kept readable at $SCRIPT_DIR/how)"
+else
+  success "Installed how to $TARGET"
+fi
 
 # 5. Check PATH
 case ":$PATH:" in
