@@ -42,3 +42,4 @@ jobs:
       - name: Verify CLI behavior, prompts & safety filters
         run: |
           python3 -c "import tests.test_vv_suite as t; t.test_cache_behavior(); t.test_behavior_and_edge_cases()"
+          python3 tests/test_safety.py

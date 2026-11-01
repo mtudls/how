@@ -25,7 +25,7 @@ jobs:
 
       - name: Syntax compile check
         run: |
-          python -m py_compile how tests/test_vv_suite.py scripts/ai_architect_review.py
+          python -m py_compile how tests/test_vv_suite.py tests/test_safety.py tests/test_ab_bench.py scripts/ai_architect_review.py
           bash -n install.sh
 
       - name: Install Ruff & Flake8
