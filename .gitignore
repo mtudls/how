@@ -2,4 +2,8 @@ __pycache__/
 *.pyc
 .ruff_cache/
 .coverage
-
+tests/quality/results/progress.jsonl
+tests/quality/results/full.log
+tests/quality/history_queries_full.jsonl
+tests/quality/extract_audit.json
+tests/quality/history_queries.txt

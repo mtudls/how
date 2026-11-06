@@ -1,0 +1,100 @@
+{"query": "to see git origin?", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 1}
+{"query": "to create private repo on gh ?", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 2}
+{"query": "to push to freshly created gh repo?", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 3}
+{"query": "to check if my Omarchy version is quattro?", "source": "history", "category": "omarchy", "date": null, "sample_cmd": null, "id": 4}
+{"query": "to create shortcut to directory in omarchy?", "source": "history", "category": "omarchy", "date": null, "sample_cmd": null, "id": 5}
+{"query": "to create alias", "source": "history", "category": "files", "date": null, "sample_cmd": null, "id": 6}
+{"query": "to set origin in git", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 7}
+{"query": "to uninstall spotify", "source": "history", "category": "packages", "date": null, "sample_cmd": null, "id": 8}
+{"query": "to remove origin from git", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 9}
+{"query": "to init git?", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 10}
+{"query": "to ping internet?", "source": "history", "category": "network", "date": null, "sample_cmd": null, "id": 11}
+{"query": "to change my name?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 12}
+{"query": "to change hostname?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 13}
+{"query": "to change username?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 14}
+{"query": "to display active users?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 15}
+{"query": "to change language to polish?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 16}
+{"query": "to check what console am I using?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 17}
+{"query": "to copy file content to clipboard?", "source": "history", "category": "files", "date": null, "sample_cmd": null, "id": 18}
+{"query": "to change keybindings in managing windows?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 19}
+{"query": "to make micro open file with carret in the end?", "source": "history", "category": "editor", "date": null, "sample_cmd": null, "id": 20}
+{"query": "to download anotherone which has key shortcuts similar to intellij?", "source": "history", "category": "editor", "date": null, "sample_cmd": null, "id": 21}
+{"query": "to push local repo to already created, but fresh, without any references, repo on github with gh, when origin is not set yet?", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 22}
+{"query": "to install vlc", "source": "history", "category": "packages", "date": null, "sample_cmd": null, "id": 23}
+{"query": "to name a commit", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 24}
+{"query": "to check memory usage", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 25}
+{"query": "to show kernel version", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 26}
+{"query": "to delete repo with gh", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 27}
+{"query": "to install claudflare cli?", "source": "history", "category": "packages", "date": null, "sample_cmd": null, "id": 28}
+{"query": "to gain delete rights with gh", "source": "history", "category": "git", "date": null, "sample_cmd": null, "id": 29}
+{"query": "to install jetrbrains toolbox?", "source": "history", "category": "packages", "date": null, "sample_cmd": null, "id": 30}
+{"query": "to run claude code in terminal? I just installed it from official omarchy installer", "source": "history", "category": "omarchy", "date": null, "sample_cmd": null, "id": 31}
+{"query": "save current neovim profile and download anotherone which has key shortcuts similar to intellij?", "source": "history", "category": "editor", "date": null, "sample_cmd": null, "id": 32}
+{"query": "to maske simple snapshot?", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 33}
+{"query": "to crate safe copy of my system before some dangerous command? I want full system safe copy.", "source": "history", "category": "system", "date": null, "sample_cmd": null, "id": 34}
+{"query": "to list open Hyprland windows?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 35}
+{"query": "to reload Hyprland config without logout?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 36}
+{"query": "to change Omarchy theme?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 37}
+{"query": "to update all packages with pacman?", "source": "synthetic", "category": "packages", "date": null, "sample_cmd": null, "id": 38}
+{"query": "to find which package owns a file?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 39}
+{"query": "to show disk usage by directory?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 40}
+{"query": "to kill process listening on port 8080?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 41}
+{"query": "to enable bluetooth and connect headphones?", "source": "synthetic", "category": "media", "date": null, "sample_cmd": null, "id": 42}
+{"query": "to take a screenshot of active window in Wayland?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 43}
+{"query": "to mirror displays in Hyprland?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 44}
+{"query": "to set default browser in Omarchy?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 45}
+{"query": "to install paru AUR helper?", "source": "synthetic", "category": "packages", "date": null, "sample_cmd": null, "id": 46}
+{"query": "to clean pacman cache?", "source": "synthetic", "category": "packages", "date": null, "sample_cmd": null, "id": 47}
+{"query": "to show systemd failed units?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 48}
+{"query": "to restart NetworkManager?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 49}
+{"query": "to create a new tmux session named work?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 50}
+{"query": "to copy ssh public key to remote host?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 51}
+{"query": "to generate ed25519 ssh key?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 52}
+{"query": "to squash last 3 git commits interactively?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 53}
+{"query": "to undo last git commit keeping changes?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 54}
+{"query": "to stash untracked files too?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 55}
+{"query": "to compare two branches with git?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 56}
+{"query": "to set git pull to rebase by default?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 57}
+{"query": "to list listening TCP ports?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 58}
+{"query": "to test DNS resolution for example.com?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 59}
+{"query": "to show my public IP address?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 60}
+{"query": "to mount a USB drive read-only?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 61}
+{"query": "to check SMART status of NVMe disk?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 62}
+{"query": "to compress a folder to tar.xz?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 63}
+{"query": "to extract a .tar.gz archive?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 64}
+{"query": "to find large files over 1GB?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 65}
+{"query": "to watch GPU usage on AMD?", "source": "synthetic", "category": "media", "date": null, "sample_cmd": null, "id": 66}
+{"query": "to switch audio output sink with pactl?", "source": "synthetic", "category": "media", "date": null, "sample_cmd": null, "id": 67}
+{"query": "to mute microphone from CLI?", "source": "synthetic", "category": "media", "date": null, "sample_cmd": null, "id": 68}
+{"query": "to set keyboard layout to pl?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 69}
+{"query": "to disable touchpad while typing?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 70}
+{"query": "to lock screen from terminal?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 71}
+{"query": "to suspend the system?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 72}
+{"query": "to list cron jobs for current user?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 73}
+{"query": "to follow journalctl logs for a service?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 74}
+{"query": "to open a floating terminal in Hyprland?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 75}
+{"query": "to move window to workspace 3 in Hyprland?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 76}
+{"query": "to toggle fullscreen in Hyprland?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 77}
+{"query": "to install docker and add user to docker group?", "source": "synthetic", "category": "packages", "date": null, "sample_cmd": null, "id": 78}
+{"query": "to prune unused docker images?", "source": "synthetic", "category": "containers", "date": null, "sample_cmd": null, "id": 79}
+{"query": "to run a one-off alpine container interactively?", "source": "synthetic", "category": "containers", "date": null, "sample_cmd": null, "id": 80}
+{"query": "to check openssl certificate expiry for a host?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 81}
+{"query": "to convert markdown to PDF?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 82}
+{"query": "to search recursively for TODO in code?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 83}
+{"query": "to replace text in many files with sed?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 84}
+{"query": "to enroll Limine config before sbctl secure boot?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 85}
+{"query": "to reset faillock password lockout for current user?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 86}
+{"query": "to check Hyprland config syntax errors from terminal?", "source": "synthetic", "category": "hyprland", "date": null, "sample_cmd": null, "id": 87}
+{"query": "to list all available Omarchy CLI commands?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 88}
+{"query": "to switch font in Omarchy?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 89}
+{"query": "to record screen region in Omarchy?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 90}
+{"query": "to scan a QR code from screen in Omarchy?", "source": "synthetic", "category": "omarchy", "date": null, "sample_cmd": null, "id": 91}
+{"query": "to list orphan packages in pacman?", "source": "synthetic", "category": "packages", "date": null, "sample_cmd": null, "id": 92}
+{"query": "to remove orphan packages in Arch Linux?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 93}
+{"query": "to show systemd boot blame times?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 94}
+{"query": "to create a btrfs snapshot with snapper?", "source": "synthetic", "category": "system", "date": null, "sample_cmd": null, "id": 95}
+{"query": "to show open files for a PID with lsof?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 96}
+{"query": "to benchmark disk read speed with fio or dd?", "source": "synthetic", "category": "files", "date": null, "sample_cmd": null, "id": 97}
+{"query": "to watch network bandwidth per process?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 98}
+{"query": "to forward local port 3000 to remote 80 over ssh?", "source": "synthetic", "category": "network", "date": null, "sample_cmd": null, "id": 99}
+{"query": "to switch GitHub CLI active account without logging out?", "source": "synthetic", "category": "git", "date": null, "sample_cmd": null, "id": 100}

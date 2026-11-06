@@ -509,8 +509,54 @@ class TestSafetyAndSandbox(unittest.TestCase):
             shutil.rmtree(tmp_inst_py, ignore_errors=True)
             shutil.rmtree(tmp_inst_rs, ignore_errors=True)
 
+    def test_quality_suite_classification_and_extraction(self):
+        """tests/quality/run_compare.py and extract_history.py accurately classify outputs and filter junk."""
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        rc_path = os.path.join(repo_root, "tests", "quality", "run_compare.py")
+        eh_path = os.path.join(repo_root, "tests", "quality", "extract_history.py")
+
+        rc_spec = importlib.util.spec_from_file_location("run_compare_mod", rc_path)
+        rc_mod = importlib.util.module_from_spec(rc_spec)
+        rc_spec.loader.exec_module(rc_mod)
+
+        eh_spec = importlib.util.spec_from_file_location("extract_history_mod", eh_path)
+        eh_mod = importlib.util.module_from_spec(eh_spec)
+        eh_spec.loader.exec_module(eh_mod)
+
+        # 1. IDK, 429 rate-limit, and prose are NOT classified as real commands
+        self.assertEqual(rc_mod.classify_response("I don't know\n"), ("idk", "I don't know", False))
+        self.assertIsNone(rc_mod.extract_command("I don't know\n"))
+
+        rate_txt = "⚡ Groq API rate limit reached (429 Rate Limit). Try again in a moment."
+        self.assertEqual(rc_mod.classify_response(rate_txt)[0], "rate_limit")
+        self.assertIsNone(rc_mod.extract_command(rate_txt))
+
+        prose_sudo = "No, Omarchy cannot use a phone passkey to authorize sudo."
+        self.assertEqual(rc_mod.classify_response(prose_sudo), ("prose", prose_sudo, False))
+        self.assertEqual(rc_mod.classify_exec(prose_sudo, real_command=False), ("skip", "no command"))
+
+        # 2. Real commands and placeholder syntax validation
+        kind, cmd, is_real = rc_mod.classify_response("git remote set-url origin <repository-url>\n")
+        self.assertEqual(kind, "command")
+        self.assertTrue(is_real)
+        self.assertTrue(rc_mod.bash_n_ok(cmd))
+        self.assertEqual(rc_mod.classify_exec(cmd, real_command=True), ("skip", "needs host"))
+
+        # 3. `omarchy` subcommands are skipped as host-dependent in sandbox
+        self.assertEqual(rc_mod.classify_exec("omarchy pkg add vlc", real_command=True), ("skip", "needs host"))
+        self.assertEqual(rc_mod.classify_exec("uname -r", real_command=True), ("execute", None))
+
+        # 4. Case-insensitive junk filtering and semantic deduplication in extract_history.py
+        self.assertTrue(eh_mod.is_junk_query("do I feel?"))
+        self.assertTrue(eh_mod.is_junk_query("to destroy omarchy?"))
+        self.assertFalse(eh_mod.is_junk_query("to check memory usage"))
+        self.assertEqual(
+            eh_mod.semantic_signature("to push to freshly created gh repo? repo is mdsyseng/how"),
+            eh_mod.semantic_signature("to push new local repo to freshly created gh repo?"),
+        )
+
     def test_static_code_quality_and_bandit_invariants(self):
-        """AST & static check across all repo Python files for syntax, line-length <= 130, and zero eval/exec."""
+        """AST & static check across all repo Python files for syntax, single imports, and zero eval/exec."""
         import ast
 
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -521,6 +567,8 @@ class TestSafetyAndSandbox(unittest.TestCase):
             os.path.join(repo_root, "tests", "test_safety.py"),
             os.path.join(repo_root, "tests", "test_vv_suite.py"),
             os.path.join(repo_root, "tests", "test_ab_bench.py"),
+            os.path.join(repo_root, "tests", "quality", "extract_history.py"),
+            os.path.join(repo_root, "tests", "quality", "run_compare.py"),
         ]
         for path in py_files:
             self.assertTrue(os.path.isfile(path), f"Missing expected file: {path}")
@@ -528,6 +576,12 @@ class TestSafetyAndSandbox(unittest.TestCase):
                 source = f.read()
             tree = ast.parse(source, filename=path)
             for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    self.assertEqual(
+                        len(node.names),
+                        1,
+                        f"Multiple imports on one line (E401) in {path}:{getattr(node, 'lineno', 0)}",
+                    )
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                     self.assertNotIn(
                         node.func.id,

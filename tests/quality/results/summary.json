@@ -1,0 +1,129 @@
+{
+  "generated_at": "2026-11-06T17:20:55.437159+01:00",
+  "n_queries": 100,
+  "versions": [
+    {
+      "name": "0.4.0",
+      "ref": "v0.4.0",
+      "image": "how-v0.4.0",
+      "flags": [
+        "-0",
+        "--no-cache",
+        "--no-context"
+      ]
+    },
+    {
+      "name": "0.3.0",
+      "ref": "dc766ab",
+      "image": "how-v0.3.0",
+      "flags": [
+        "-0",
+        "--no-cache",
+        "--no-context"
+      ]
+    },
+    {
+      "name": "0.1.1",
+      "ref": "v0.1.1",
+      "image": "how-v0.1.1",
+      "flags": [
+        "-0",
+        "--no-cache"
+      ]
+    }
+  ],
+  "by_version": {
+    "0.4.0": {
+      "n": 100,
+      "with_command": 52,
+      "pct_with_command": 52.0,
+      "pct_syntax_ok": 52.0,
+      "pct_syntax_ok_of_cmds": 100.0,
+      "pct_idk": 34.0,
+      "pct_prose": 11.0,
+      "pct_how_error_timeout": 3.0,
+      "n_idk": 34,
+      "n_prose": 11,
+      "n_error_or_429": 3,
+      "median_s": 1.8,
+      "p95_s": 3.301,
+      "pct_exec_ok": 3.0,
+      "pct_exec_ok_of_executed": 60.0,
+      "pct_skipped": 95.0,
+      "pct_exec_fail": 2.0,
+      "n_exec": 5,
+      "n_skip": 95,
+      "n_exec_ok": 3
+    },
+    "0.3.0": {
+      "n": 100,
+      "with_command": 53,
+      "pct_with_command": 53.0,
+      "pct_syntax_ok": 53.0,
+      "pct_syntax_ok_of_cmds": 100.0,
+      "pct_idk": 35.0,
+      "pct_prose": 12.0,
+      "pct_how_error_timeout": 0.0,
+      "n_idk": 35,
+      "n_prose": 12,
+      "n_error_or_429": 0,
+      "median_s": 1.829,
+      "p95_s": 3.164,
+      "pct_exec_ok": 2.0,
+      "pct_exec_ok_of_executed": 33.3,
+      "pct_skipped": 94.0,
+      "pct_exec_fail": 4.0,
+      "n_exec": 6,
+      "n_skip": 94,
+      "n_exec_ok": 2
+    },
+    "0.1.1": {
+      "n": 100,
+      "with_command": 70,
+      "pct_with_command": 70.0,
+      "pct_syntax_ok": 70.0,
+      "pct_syntax_ok_of_cmds": 100.0,
+      "pct_idk": 14.0,
+      "pct_prose": 16.0,
+      "pct_how_error_timeout": 0.0,
+      "n_idk": 14,
+      "n_prose": 16,
+      "n_error_or_429": 0,
+      "median_s": 1.891,
+      "p95_s": 3.233,
+      "pct_exec_ok": 6.0,
+      "pct_exec_ok_of_executed": 60.0,
+      "pct_skipped": 90.0,
+      "pct_exec_fail": 4.0,
+      "n_exec": 10,
+      "n_skip": 90,
+      "n_exec_ok": 6
+    }
+  },
+  "pairwise_identical_commands": {
+    "0.4.0_vs_0.3.0": {
+      "identical_pct": 57.1,
+      "n": 56,
+      "identical": 32
+    },
+    "0.4.0_vs_0.1.1": {
+      "identical_pct": 34.7,
+      "n": 72,
+      "identical": 25
+    },
+    "0.3.0_vs_0.1.1": {
+      "identical_pct": 25.0,
+      "n": 72,
+      "identical": 18
+    }
+  },
+  "groq_calls": {
+    "how": 300,
+    "retry": 0
+  },
+  "notes": [
+    "Real shell commands are separated from 'I don't know', 429 rate-limit banners, and conceptual prose.",
+    "Angle-bracket placeholders (<repo-name>, <name>) are normalized before bash -n syntax validation.",
+    "Suggested commands execute only inside disposable --network none --read-only containers."
+  ]
+}

@@ -30,9 +30,9 @@ jobs:
 
       - name: Syntax compile & ShellCheck
         run: |
-          python -m py_compile how scripts/transpile_rust.py scripts/ai_architect_review.py tests/test_vv_suite.py tests/test_safety.py tests/test_ab_bench.py
-          bash -n install.sh
-          shellcheck install.sh
+          python -m py_compile how scripts/transpile_rust.py scripts/ai_architect_review.py tests/test_vv_suite.py tests/test_safety.py tests/test_ab_bench.py tests/quality/extract_history.py tests/quality/run_compare.py
+          bash -n install.sh docker/build.sh
+          shellcheck install.sh docker/build.sh
 
       - name: Install Ruff & Flake8
         run: |
