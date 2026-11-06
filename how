@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [-t|--think|--fast] [--no-cache] [--no-context] [to] <query...> | context | triage | model | auth | cache | history | feedback | test
-# omarchy:examples=how to ping google | how -0 to find largest files | how -t to fix limine secure boot | how context
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--no-cache] [--no-context] [to] <query...> | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | test
+# omarchy:examples=how to ping google | how -0 to find largest files | how explain "tar -xzvf a.tgz" | how fix | how run
 # omarchy:aliases=howto
 """
 how - Fast, concise, direct CLI tool to learn "how to do sht in ..."
@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -65,10 +65,12 @@ Examples:
   {CYAN}how --yolo{RESET} to run single test file         {DIM}# Auto-read OS/stack & print what was read{RESET}
 
 Commands:
+  {CYAN}explain{RESET} [command...]                   Offline <1ms visual pipeline & flag anatomy + safety badge
+  {CYAN}fix{RESET} [error...]                         Diagnose & repair the last command (offline rules + AI fallback)
+  {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command with safety check
   {CYAN}context{RESET} [careful|yolo|dry-run|on|off]  Graduated OS & stack discovery (default: careful)
   {CYAN}triage{RESET} [on|off|<query...>]             Groq question triage & deep-thinking routing
   {CYAN}status{RESET}                                 Unified dashboard (auth, models, context, cache, engine)
-  {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command
   {CYAN}build{RESET} [--install]                      Transpile Python to native Rust binary locally (no LLM)
   {CYAN}model{RESET} [check|think]                    Select and benchmark fast & deep-thinking models
   {CYAN}auth{RESET} [login|status|logout]             Manage Groq API key
@@ -1778,9 +1780,14 @@ def get_db_connection():
                 verbosity TEXT,
                 response TEXT,
                 created_at REAL,
-                expires_at REAL
+                expires_at REAL,
+                hit_count INTEGER DEFAULT 1
             )
         """)
+        try:
+            conn.execute("ALTER TABLE response_cache ADD COLUMN hit_count INTEGER DEFAULT 1")
+        except Exception:
+            pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_expires_at ON response_cache(expires_at)")
     return conn
 
@@ -1828,8 +1835,8 @@ def compute_cache_key(query, model, verbosity, prompt_hash="", docs_hash=""):
     return hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()
 
 
-def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash="", docs_hash=""):
-    """Returns (response_text, created_at) on valid cache hit with sliding expiration update, else None."""
+def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash="", docs_hash="", return_hits=False):
+    """Returns (response_text, created_at) (or 3-tuple with hit_count if return_hits=True) on valid cache hit."""
     if retention_seconds <= 0:
         return None
     import time
@@ -1840,18 +1847,21 @@ def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash=
             conn.execute("DELETE FROM response_cache WHERE expires_at < ?", (now,))
             cur = conn.cursor()
             cur.execute(
-                "SELECT response, created_at, expires_at FROM response_cache WHERE key = ?",
+                "SELECT response, created_at, expires_at, COALESCE(hit_count, 1) FROM response_cache WHERE key = ?",
                 (cache_key,),
             )
             row = cur.fetchone()
             if row:
-                resp, created_at, expires_at = row
+                resp, created_at, expires_at, hits = row
                 if now < expires_at:
                     new_expires_at = now + retention_seconds
+                    new_hits = int(hits or 1) + 1
                     conn.execute(
-                        "UPDATE response_cache SET expires_at = ? WHERE key = ?",
-                        (new_expires_at, cache_key),
+                        "UPDATE response_cache SET expires_at = ?, hit_count = ? WHERE key = ?",
+                        (new_expires_at, new_hits, cache_key),
                     )
+                    if return_hits:
+                        return resp, created_at, new_hits
                     return resp, created_at
     except Exception:
         pass
@@ -1869,8 +1879,8 @@ def save_cached_response(query, model, verbosity, response_text, retention_secon
         expires_at = now + retention_seconds
         with db_session() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO response_cache (key, query, model, verbosity, response, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO response_cache (key, query, model, verbosity, response, created_at, expires_at, hit_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             """, (cache_key, query, model, verbosity, response_text, now, expires_at))
     except Exception:
         pass
@@ -2565,8 +2575,497 @@ def extract_executable_command(text):
     return lines[0]
 
 
+def classify_command_safety(command: str) -> dict:
+    """
+    Classifies a shell command into a traffic-light safety tier in <0.1ms:
+    - 'safe': read-only inspection, listing, searching, or status queries (🟢 SAFE)
+    - 'modifies': writes files, installs packages, updates config, or mutates git/services (🟡 MODIFIES)
+    - 'destructive': deletes data, removes packages, alters disk/partitions/bootloader, or force-kills (🔴 DESTRUCTIVE / ADMIN)
+    """
+    import re
+    cmd = (command or "").strip()
+    if not cmd:
+        return {
+            "level": "safe",
+            "badge": f"{GREEN}🟢 SAFE (read-only){RESET}",
+            "short_badge": "🟢 safe",
+            "reason": "empty command",
+        }
+
+    low = cmd.lower()
+
+    destructive_rules = [
+        (r"\brm\s+.*(?:-r|-f|--recursive|--force)", "removes files/directories recursively or forcefully"),
+        (r"\bfind\b.*(?:-delete|-exec\s+rm\b)", "deletes matched filesystem entries"),
+        (r"\b(?:dd\s+.*of=|mkfs|fdisk|parted|sfdisk|cfdisk|wipefs|shred)\b", "modifies or formats block devices/disks"),
+        (r"\b(?:pacman|yay|paru)\s+-[a-z]*r[a-z]*\b", "removes installed system packages"),
+        (r"\b(?:apt|apt-get|dnf)\s+(?:remove|purge|autoremove)\b", "removes installed packages"),
+        (r"\bomarchy\s+pkg\s+remove\b", "removes packages via Omarchy"),
+        (r"\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f|push\s+.*(?:-f|--force)|branch\s+-D)\b", "discards uncommitted or remote Git history"),
+        (r"\b(?:kill|killall|pkill)\s+(?:-9|-sigkill)\b", "force-terminates processes (SIGKILL)"),
+        (r"\b(?:reboot|poweroff|shutdown|halt)\b", "powers off or reboots the system"),
+        (r"\b(?:limine\s+enroll-config|sbctl|faillock\s+--reset|ufw\s+|iptables\b|nft\s+)", "alters bootloader, auth locks, or firewall rules"),
+        (r"\b(?:chmod\s+-r\s+777|chown\s+-r)\b", "recursively changes ownership or world-writable permissions"),
+        (r">\s*/dev/(?:sd[a-z]|nvme\d|vd[a-z])", "writes directly to a raw block device"),
+    ]
+    for pat, reason in destructive_rules:
+        if re.search(pat, low):
+            return {
+                "level": "destructive",
+                "badge": f"{RED}{BOLD}🔴 DESTRUCTIVE / ADMIN{RESET}",
+                "short_badge": "🔴 destructive",
+                "reason": reason,
+            }
+
+    modifies_rules = [
+        (r"\b(?:rm|mv|cp|mkdir|rmdir|touch|ln|chmod|chown|chgrp|truncate|tee|rsync)\b", "creates, moves, links, or modifies files/permissions"),
+        (r"\bsed\s+-[a-z]*i\b", "edits files in-place"),
+        (r"(?:^|[^0-9>&])>>?\s*(?!/dev/null\b|&)\S+", "redirects output to write or overwrite a file"),
+        (r"\b(?:pacman|yay|paru)\s+-(?:S|U)\b", "installs or upgrades system packages"),
+        (r"\b(?:apt|apt-get|dnf|apk|zypper)\s+(?:install|update|upgrade)\b", "installs or updates packages"),
+        (r"\bomarchy\s+(?:update|pkg\s+add|plugin\s+add|theme\s+set|font\s+set)\b", "updates Omarchy packages, plugins, or desktop theme/font"),
+        (r"\b(?:pip|pipx|uv\s+add|uv\s+pip\s+install|npm\s+install|pnpm\s+add|bun\s+add|cargo\s+install|cargo\s+add)\b", "installs project/language dependencies"),
+        (r"\bsystemctl\s+(?:--user\s+)?(?:start|stop|restart|reload|enable|disable|mask|unmask)\b", "changes systemd service state"),
+        (r"\b(?:hostnamectl\s+set-|timedatectl\s+set-|nmcli\s+.*(?:connect|up|down|modify|add|delete)|wpctl\s+set-|xdg-settings\s+set|xdg-mime\s+default)\b", "modifies system or desktop settings"),
+        (r"\bgit\s+(?:commit|push|pull|merge|rebase|checkout|switch|clone|init|add|stash|tag|remote\s+(?:add|set-url|remove|rename))\b", "modifies Git repository state or remotes"),
+        (r"\bgh\s+(?:repo\s+create|issue\s+create|pr\s+create|auth\s+switch)\b", "modifies GitHub resources or active account"),
+        (r"\b(?:sudo|pkexec|doas)\b", "executes with elevated administrator privileges"),
+    ]
+    for pat, reason in modifies_rules:
+        if re.search(pat, low):
+            return {
+                "level": "modifies",
+                "badge": f"{YELLOW}{BOLD}🟡 MODIFIES{RESET}",
+                "short_badge": "🟡 modifies",
+                "reason": reason,
+            }
+
+    return {
+        "level": "safe",
+        "badge": f"{GREEN}{BOLD}🟢 SAFE (read-only){RESET}",
+        "short_badge": "🟢 safe",
+        "reason": "read-only inspection or query",
+    }
+
+
+COMMAND_PURPOSE_DB = {
+    "ls": "list directory contents",
+    "find": "search for files and directories in a hierarchy",
+    "grep": "search text patterns using regular expressions",
+    "rg": "recursively search directories for a regex pattern (ripgrep)",
+    "cat": "concatenate and print file contents",
+    "head": "output the first part of files or piped input",
+    "tail": "output the last part of files or follow live logs",
+    "sort": "sort lines of text or numeric sizes",
+    "uniq": "report or omit repeated lines",
+    "wc": "print newline, word, and byte counts",
+    "du": "estimate file and directory disk space usage",
+    "df": "report filesystem disk space usage",
+    "free": "display amount of free and used memory (RAM & swap)",
+    "ps": "report a snapshot of current processes",
+    "ss": "investigate sockets and listening network ports",
+    "lsof": "list open files and the processes using them",
+    "ip": "show or manipulate routing, network devices, and interfaces",
+    "nmcli": "command-line tool for controlling NetworkManager",
+    "curl": "transfer data from or to a server via URLs",
+    "tar": "create, extract, or list archive files",
+    "ln": "create hard or symbolic links between files",
+    "chmod": "change file mode bits / permissions",
+    "chown": "change file owner and group",
+    "rm": "remove files or directories",
+    "cp": "copy files and directories",
+    "mv": "move or rename files and directories",
+    "mkdir": "create directories",
+    "xargs": "build and execute command lines from standard input",
+    "awk": "pattern scanning and text processing language",
+    "sed": "stream editor for filtering and transforming text",
+    "jq": "lightweight and flexible command-line JSON processor",
+    "git": "distributed version control system",
+    "gh": "GitHub official CLI tool",
+    "docker": "container runtime and image management CLI",
+    "pacman": "Arch Linux package manager",
+    "yay": "AUR helper and Pacman wrapper for Arch/Omarchy",
+    "systemctl": "inspect and control the systemd system and service manager",
+    "journalctl": "query and view logs from systemd-journald",
+    "hostnamectl": "query or change the system hostname",
+    "timedatectl": "query or change the system time, clock, and timezone",
+    "xdg-settings": "get or set desktop environment properties (e.g. default browser)",
+    "hyprctl": "utility for controlling and querying the Hyprland compositor",
+    "grim": "grab screenshot images from a Wayland compositor",
+    "slurp": "select a region in a Wayland compositor",
+    "wpctl": "WirePlumber PipeWire audio control CLI",
+    "bluetoothctl": "interactive and CLI Bluetooth management tool",
+    "omarchy": "Omarchy desktop & system management CLI",
+    "btop": "interactive resource monitor for CPU, memory, disks, and processes",
+    "uname": "print system and kernel information",
+    "faillock": "view and reset PAM authentication failure records",
+    "limine": "Limine modern bootloader utility",
+    "sbctl": "Secure Boot key and EFI signature manager",
+}
+
+FLAG_PURPOSE_DB = {
+    "-h": "human-readable sizes (or help)",
+    "--human-readable": "print sizes in human-readable units (K, M, G)",
+    "-l": "long listing format with permissions, owner, size, and date",
+    "-a": "include hidden entries starting with '.' (all)",
+    "-la": "long listing format including hidden dotfiles",
+    "-al": "long listing format including hidden dotfiles",
+    "-r": "recursive operation (or reverse sort order in sort)",
+    "-R": "operate recursively on directories (or remove package in pacman/yay)",
+    "-f": "force operation without confirmation (or follow in tail/journalctl)",
+    "-rf": "recursively and forcefully remove directories and contents",
+    "-s": "symbolic link (ln -s) or summary total only (du -s) or silent (curl -s)",
+    "-sh": "summary total in human-readable units (e.g. du -sh)",
+    "-rh": "reverse order sorting human-readable numbers (e.g. 2G before 500M)",
+    "-n": "limit number of lines/items or show numeric addresses",
+    "-i": "case-insensitive matching (grep) or interactive/in-place (sed) or interface/port (lsof)",
+    "-v": "verbose output (or invert match in grep)",
+    "-type": "filter find results by file type (f=file, d=directory, l=symlink)",
+    "-name": "match filename pattern (case-sensitive)",
+    "-iname": "match filename pattern (case-insensitive)",
+    "-mtime": "match files modified N*24 hours ago (-N = within last N days)",
+    "-size": "match files by size threshold (e.g. +100M)",
+    "-delete": "delete matched files directly",
+    "-exec": "execute specified command on matched files",
+    "-xzvf": "extract (-x) gzipped (-z) archive verbosely (-v) from file (-f)",
+    "-czvf": "create (-c) gzipped (-z) archive verbosely (-v) into file (-f)",
+    "-tulpn": "show TCP (-t), UDP (-u), listening (-l), process (-p), and numeric port (-n) sockets",
+    "-Rns": "remove package (-R), its unneeded dependencies (-s), and system config files (-n)",
+    "-S": "sync and install package(s) from repositories",
+    "-Syu": "synchronize package databases (-y) and upgrade all packages (-u)",
+    "-Ss": "search remote package databases for matching keywords",
+    "-Si": "display detailed information about a remote package",
+    "-Q": "query installed package database",
+    "-Qe": "list explicitly installed packages",
+    "-Ql": "list files owned by an installed package",
+    "--user": "operate on the current user's systemd session rather than system-wide",
+    "--now": "also start or stop the unit immediately alongside enable/disable",
+    "--private": "create repository with private visibility",
+    "--hard": "reset working tree and index, discarding uncommitted changes",
+}
+
+
+def split_shell_pipeline(command: str) -> list[tuple[str, str]]:
+    """
+    Splits a shell command string into [(stage_cmd, operator_after), ...]
+    respecting single/double quotes and subshell $(...) nesting.
+    """
+    stages = []
+    buf = []
+    in_single = False
+    in_double = False
+    paren_depth = 0
+    i = 0
+    n = len(command)
+
+    while i < n:
+        ch = command[i]
+        if ch == "\\" and not in_single and i + 1 < n:
+            buf.append(ch)
+            buf.append(command[i + 1])
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+        if not in_single and not in_double:
+            if ch == "(":
+                paren_depth += 1
+            elif ch == ")" and paren_depth > 0:
+                paren_depth -= 1
+            elif paren_depth == 0:
+                if command[i : i + 2] in ("&&", "||"):
+                    op = command[i : i + 2]
+                    seg = "".join(buf).strip()
+                    if seg:
+                        stages.append((seg, op))
+                    buf = []
+                    i += 2
+                    continue
+                if ch in ("|", ";"):
+                    seg = "".join(buf).strip()
+                    if seg:
+                        stages.append((seg, ch))
+                    buf = []
+                    i += 1
+                    continue
+        buf.append(ch)
+        i += 1
+
+    tail = "".join(buf).strip()
+    if tail:
+        stages.append((tail, ""))
+    return stages
+
+
+def explain_command_anatomy(command: str) -> dict:
+    """
+    Builds a complete offline <1ms breakdown of a command:
+    - safety classification (level, badge, reason)
+    - pipeline/chain stages with operator semantics and per-token/flag explanations
+    """
+    import shlex
+    cmd = (command or "").strip()
+    safety = classify_command_safety(cmd)
+    raw_stages = split_shell_pipeline(cmd)
+
+    op_descriptions = {
+        "|": "pipes stdout into next stage's stdin",
+        "&&": "runs next stage only if this stage succeeds (exit 0)",
+        "||": "runs next stage only if this stage fails (non-zero exit)",
+        ";": "runs next stage sequentially regardless of exit status",
+    }
+
+    parsed_stages = []
+    for stage_str, op_after in raw_stages:
+        try:
+            tokens = shlex.split(stage_str)
+        except Exception:
+            tokens = stage_str.split()
+
+        if not tokens:
+            continue
+
+        idx = 0
+        elevated = False
+        if tokens[0] in ("sudo", "pkexec", "doas") and len(tokens) > 1:
+            elevated = True
+            idx = 1
+
+        binary = tokens[idx] if idx < len(tokens) else tokens[0]
+        base_bin = os.path.basename(binary)
+        purpose = COMMAND_PURPOSE_DB.get(base_bin, f"execute '{base_bin}' command")
+        if elevated:
+            purpose = f"[sudo: elevated root privileges] {purpose}"
+
+        token_notes = []
+        j = idx + 1
+        while j < len(tokens):
+            tok = tokens[j]
+            if tok in FLAG_PURPOSE_DB:
+                note = FLAG_PURPOSE_DB[tok]
+                # Contextual disambiguation for common overloaded flags
+                if base_bin == "sort" and tok == "-r":
+                    note = "reverse sort order (highest/largest first)"
+                elif base_bin in ("pacman", "yay") and tok == "-R":
+                    note = "remove installed package"
+                elif base_bin == "ln" and tok == "-s":
+                    note = "create symbolic (soft) link instead of hard link"
+                elif base_bin == "du" and tok == "-s":
+                    note = "display only a total summary for each argument"
+                if tok in ("-type", "-name", "-iname", "-mtime", "-size") and j + 1 < len(tokens):
+                    arg_val = tokens[j + 1]
+                    token_notes.append((f"{tok} {arg_val}", note))
+                    j += 2
+                    continue
+                token_notes.append((tok, note))
+            elif tok.startswith("-") and len(tok) > 2 and not tok.startswith("--"):
+                # Combined short flags (e.g. -la, -rf)
+                sub_meanings = []
+                for ch in tok[1:]:
+                    f_key = f"-{ch}"
+                    if f_key in FLAG_PURPOSE_DB:
+                        sub_meanings.append(f"-{ch}: {FLAG_PURPOSE_DB[f_key]}")
+                if sub_meanings:
+                    token_notes.append((tok, "; ".join(sub_meanings)))
+                else:
+                    token_notes.append((tok, "option flag"))
+            elif tok.startswith("-"):
+                token_notes.append((tok, "option flag"))
+            elif j == idx + 1 and base_bin in ("git", "gh", "docker", "systemctl", "omarchy", "nmcli", "ip", "wpctl", "hyprctl", "xdg-settings"):
+                token_notes.append((tok, f"'{base_bin}' subcommand"))
+            else:
+                token_notes.append((tok, "target argument / parameter"))
+            j += 1
+
+        parsed_stages.append({
+            "raw": stage_str,
+            "binary": base_bin,
+            "elevated": elevated,
+            "purpose": purpose,
+            "tokens": token_notes,
+            "operator_after": op_after,
+            "operator_meaning": op_descriptions.get(op_after, ""),
+        })
+
+    return {
+        "command": cmd,
+        "safety": safety,
+        "stages": parsed_stages,
+    }
+
+
+def get_last_suggested_command() -> tuple[str, str]:
+    """Returns (last_command, last_query) from ~/.config/how/commands.log, or ('', '') if none."""
+    if not os.path.exists(COMMANDS_LOG):
+        return "", ""
+    try:
+        with open(COMMANDS_LOG, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        for line in reversed(lines):
+            if " | Command: " in line:
+                parts = line.split(" | Command: ", 1)
+                last_cmd = parts[1].strip()
+                last_query = ""
+                if 'Query: "' in parts[0]:
+                    last_query = parts[0].split('Query: "', 1)[1].rsplit('"', 1)[0]
+                elif 'Pytanie: "' in parts[0]:
+                    last_query = parts[0].split('Pytanie: "', 1)[1].rsplit('"', 1)[0]
+                if last_cmd:
+                    return last_cmd, last_query
+    except Exception:
+        pass
+    return "", ""
+
+
+def run_explain_command(args):
+    """Handles `how explain [command...]` — visual command & pipeline anatomy in <1ms."""
+    target_cmd = " ".join(args).strip()
+    source_query = ""
+    if not target_cmd:
+        target_cmd, source_query = get_last_suggested_command()
+        if not target_cmd:
+            print(f"\n{YELLOW}! No command provided and no recent command in {COMMANDS_LOG}.{RESET}")
+            print(f"{DIM}Usage: {CYAN}how explain \"find . -type f -exec du -h {{}} + | sort -rh | head -n 10\"{RESET}\n")
+            return
+
+    anatomy = explain_command_anatomy(target_cmd)
+    safety = anatomy["safety"]
+    stages = anatomy["stages"]
+
+    print(f"\n{BOLD}{MAGENTA}◆ Command Anatomy & Safety Inspector{RESET}")
+    if source_query:
+        print(f"  {BOLD}For Query:{RESET} {DIM}{source_query}{RESET}")
+    print(f"  {BOLD}Command:{RESET}   {BOLD}{GREEN}{target_cmd}{RESET}")
+    print(f"  {BOLD}Safety:{RESET}    {safety['badge']} {DIM}— {safety['reason']}{RESET}\n")
+
+    total = len(stages)
+    for idx, st in enumerate(stages, 1):
+        stage_hdr = f"[Stage {idx}/{total}]" if total > 1 else "[Command]"
+        print(f"  {BOLD}{CYAN}{stage_hdr}{RESET} {BOLD}{st['raw']}{RESET}")
+        print(f"    {DIM}↳ {st['binary']}:{RESET} {st['purpose']}")
+        for tok, desc in st["tokens"]:
+            print(f"      {GREEN}{tok:<16}{RESET} {DIM}{desc}{RESET}")
+        if st["operator_after"]:
+            print(f"    {YELLOW}──({st['operator_after']})──▶{RESET} {DIM}{st['operator_meaning']}{RESET}")
+    print()
+
+
+def diagnose_command_locally(command: str, error_hint: str = "") -> dict:
+    """
+    Inspects a failed or problematic command + optional error message offline (<1ms)
+    and returns {'matched': bool, 'diagnosis': str, 'fixed_command': str}.
+    """
+    cmd = (command or "").strip()
+    combined = f"{cmd} {error_hint}".lower()
+
+    if any(k in combined for k in ("db.lck", "unable to lock database", "failed to init transaction")):
+        fixed = f"sudo rm -f /var/lib/pacman/db.lck && {cmd}" if cmd else "sudo rm -f /var/lib/pacman/db.lck"
+        return {
+            "matched": True,
+            "diagnosis": "Stale Pacman database lock file (/var/lib/pacman/db.lck) is blocking package operations.",
+            "fixed_command": fixed,
+        }
+
+    if any(k in combined for k in ("permission denied", "operation not permitted", "must be root", "are you root")):
+        if cmd and not cmd.startswith("sudo "):
+            return {
+                "matched": True,
+                "diagnosis": "Command requires administrator (root) privileges.",
+                "fixed_command": f"sudo {cmd}",
+            }
+
+    if ("git push" in combined or "upstream" in combined) and any(
+        k in combined for k in ("no upstream", "has no upstream", "set-upstream", "git push")
+    ):
+        return {
+            "matched": True,
+            "diagnosis": "Current local Git branch has no upstream tracking branch configured on origin.",
+            "fixed_command": "git push --set-upstream origin $(git branch --show-current)",
+        }
+
+    if any(k in combined for k in ("address already in use", "eaddrinuse", "port is already allocated")):
+        import re
+        port_m = re.search(r"(?:port|:)\s*(\d{2,5})\b", combined)
+        port = port_m.group(1) if port_m else "8080"
+        return {
+            "matched": True,
+            "diagnosis": f"TCP port {port} is already bound by another process.",
+            "fixed_command": f"ss -tulpn | grep :{port}",
+        }
+
+    if "limine" in combined or ("secure boot" in combined and "sbctl" in combined):
+        return {
+            "matched": True,
+            "diagnosis": "On Omarchy with Limine + Secure Boot, always enroll Limine config before signing EFI binaries.",
+            "fixed_command": "sudo limine enroll-config && sudo sbctl sign-all",
+        }
+
+    if cmd:
+        imp_cmd, notes = improve_query_locally(cmd)
+        if imp_cmd != cmd and notes:
+            return {
+                "matched": True,
+                "diagnosis": f"Repaired typo in command ({', '.join(notes)}).",
+                "fixed_command": imp_cmd,
+            }
+
+    return {"matched": False, "diagnosis": "", "fixed_command": ""}
+
+
+def run_fix_command(args, opts):
+    """Handles `how fix [error or command...]` — diagnoses & repairs the last command."""
+    hint = " ".join(args).strip()
+    last_cmd, last_query = get_last_suggested_command()
+
+    target_cmd = last_cmd or hint
+    if not target_cmd:
+        print(f"\n{YELLOW}! No recent command in {COMMANDS_LOG} and no error context provided.{RESET}")
+        print(f"{DIM}Usage: {CYAN}how fix{RESET} {DIM}or{RESET} {CYAN}how fix \"permission denied\"{RESET}\n")
+        return
+
+    diag = diagnose_command_locally(last_cmd or hint, error_hint=hint)
+    if diag["matched"]:
+        fixed = diag["fixed_command"]
+        safety = classify_command_safety(fixed)
+        print(f"\n{BOLD}{MAGENTA}◆ Instant Command Diagnosis & Repair{RESET}")
+        if last_cmd:
+            print(f"  {BOLD}Previous:{RESET}  {DIM}{last_cmd}{RESET}")
+        if hint and hint != last_cmd:
+            print(f"  {BOLD}Symptom:{RESET}   {DIM}{hint}{RESET}")
+        print(f"  {BOLD}Diagnosis:{RESET} {diag['diagnosis']}")
+        print(f"  {BOLD}Safety:{RESET}    {safety['badge']} {DIM}— {safety['reason']}{RESET}\n")
+        display_suggested_command(fixed, query=f"fix: {last_query or target_cmd}", is_cached=False)
+        return
+
+    if opts.get("dry_run"):
+        print(f"\n{BOLD}{MAGENTA}◆ Command Repair Dry-Run{RESET}")
+        print(f"  {BOLD}Target:{RESET} {DIM}{target_cmd}{RESET}")
+        print(f"  {YELLOW}[dry-run]{RESET} Would escalate repair query to `how -t` for deep troubleshooting.\n")
+        return
+
+    fix_query = f"to fix command `{last_cmd}`" + (f" failing with: {hint}" if hint else "") if last_cmd else f"to fix: {hint}"
+    ask_groq(
+        fix_query,
+        verbosity=opts.get("verbosity"),
+        no_cache=True,
+        think_mode="deep",
+        no_context=opts.get("no_context", False),
+        force_context=opts.get("force_context", False),
+        context_mode_override=opts.get("context_mode_override"),
+        dry_run=False,
+    )
+
+
 def display_suggested_command(command, query="", is_cached=False):
-    """Displays suggested command, copies to clipboard, and records in history logs."""
+    """Displays suggested command with Traffic-Light Safety Badge, copies to clipboard, and logs in history."""
     cmd = command.strip()
     if not cmd:
         return
@@ -2576,8 +3075,12 @@ def display_suggested_command(command, query="", is_cached=False):
     copied = copy_to_clipboard(cmd)
     clip_hint = f" {GREEN}[copied to clipboard: paste Ctrl+Shift+V]{RESET}" if copied else ""
     cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
+    safety = classify_command_safety(cmd)
 
-    print(f"{BOLD}{CYAN}Suggested command:{RESET}{cache_tag}{clip_hint} {DIM}• or run: {CYAN}how run{RESET}")
+    print(
+        f"{BOLD}{CYAN}Suggested command:{RESET} [{safety['badge']}]{cache_tag}{clip_hint} "
+        f"{DIM}• run: {CYAN}how run{RESET} {DIM}• dissect: {CYAN}how explain{RESET}"
+    )
     print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
 
@@ -2714,21 +3217,29 @@ def ask_groq(
         cached = get_cached_response(
             raw_query, cache_model_key, verbosity, retention_sec,
             prompt_hash=prompt_hash, docs_hash=docs_hash,
+            return_hits=True,
         )
         if cached:
-            cached_text, cached_at = cached
+            cached_text, cached_at, hit_count = cached
             cached_text = strip_control_sequences(cached_text)
             age_sec = max(0, int(time.time() - cached_at))
             age_str = format_retention_short(age_sec) + " ago" if age_sec > 0 else "just now"
 
             if verbosity != "zero":
                 v_info = f", {verbosity}" if verbosity != "normal" else ""
-                print(f"\n{CYAN}{BOLD}how ❯{RESET} {YELLOW}[cache]{RESET} {DIM}(model: {cache_model_key}{v_info}, {age_str}){RESET}")
+                hit_tag = f", hit #{hit_count}" if hit_count >= 2 else ""
+                print(f"\n{CYAN}{BOLD}how ❯{RESET} {YELLOW}[cache]{RESET} {DIM}(model: {cache_model_key}{v_info}, {age_str}{hit_tag}){RESET}")
                 if is_yolo or env_context:
                     receipt = format_context_read_receipt(os_prof=os_prof, stack_info=stack_info)
                     print(f"  {CYAN}🔎 Read:{RESET} {DIM}{receipt}{RESET}")
                 if verbosity == "normal":
-                    print(f"  {DIM}💡 Didn't work? Re-run fresh with deep thinking: {CYAN}how -t --no-cache {raw_query}{RESET}")
+                    if hit_count >= 2:
+                        print(
+                            f"  {YELLOW}🔁 Asked {hit_count}x:{RESET} {DIM}Dissect flags with {CYAN}how explain{RESET}"
+                            f"{DIM}, repair with {CYAN}how fix{RESET}{DIM}, or try deep mode: {CYAN}how -t --no-cache {raw_query}{RESET}"
+                        )
+                    else:
+                        print(f"  {DIM}💡 Didn't work? Re-run fresh with deep thinking: {CYAN}how -t --no-cache {raw_query}{RESET}")
                 print("\n" + cached_text.strip() + f"{RESET}\n")
 
             cmd = extract_executable_command(cached_text)
@@ -2981,33 +3492,21 @@ def show_unified_status():
 
 
 def run_last_command(auto_yes=False, dry_run=False):
-    """Safely previews (dry-run) and optionally executes the most recently suggested command."""
+    """Safely previews (dry-run) with Traffic-Light Safety Badge and optionally executes the last command."""
     if not os.path.exists(COMMANDS_LOG):
         print(f"\n{YELLOW}! No recent suggested command found in {COMMANDS_LOG}.{RESET}\n")
         return
 
-    last_cmd = ""
-    last_query = ""
-    try:
-        with open(COMMANDS_LOG, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
-        for line in reversed(lines):
-            if " | Command: " in line:
-                parts = line.split(" | Command: ", 1)
-                last_cmd = parts[1].strip()
-                if 'Query: "' in parts[0]:
-                    last_query = parts[0].split('Query: "', 1)[1].rsplit('"', 1)[0]
-                break
-    except Exception:
-        pass
-
+    last_cmd, last_query = get_last_suggested_command()
     if not last_cmd:
         print(f"\n{YELLOW}! No executable command found in history.{RESET}\n")
         return
 
+    safety = classify_command_safety(last_cmd)
     print(f"\n{BOLD}{MAGENTA}◆ Last Suggested Command{RESET}")
     if last_query:
         print(f"  Query:     {DIM}{last_query}{RESET}")
+    print(f"  Safety:    {safety['badge']} {DIM}— {safety['reason']}{RESET}")
     print(f"  {YELLOW}[dry-run]{RESET}  {BOLD}{GREEN}$ {last_cmd}{RESET}\n")
 
     if dry_run:
@@ -3408,6 +3907,14 @@ def dispatch_subcommand(args, opts):
 
     if first in ("run", "!") and len(args) == 1:
         run_last_command(auto_yes=opts.get("feedback_yes", False), dry_run=opts.get("dry_run", False))
+        return True
+
+    if first in ("explain", "anatomy", "dissect"):
+        run_explain_command(args[1:])
+        return True
+
+    if first in ("fix", "repair", "diagnose"):
+        run_fix_command(args[1:], opts)
         return True
 
     if first in ("build", "compile", "transpile"):

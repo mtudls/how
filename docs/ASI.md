@@ -23,11 +23,12 @@ how test --stats  # 10-round statistical benchmark
 <summary><b>How `how test` works under the hood (way / form)</b></summary>
 
 - **Automatic Baseline Detection:** Compares your work-in-progress [`how`](../how) (and transpiled Rust binary) against the committed `git HEAD` or installed `$PATH` binary.
-- **4 Verification Axes ([`tests/test_vv_suite.py`](../tests/test_vv_suite.py)):**
-  1. **Startup Latency:** Interleaved `AB/BA` cold-start measurements (`~1–5 ms` Rust vs `~45–200 ms` Python).
-  2. **Cache & Local Docs:** Verifies SQLite WAL sliding expiration, retention units (`m`, `h`, `D`, `M`), and doc fingerprinting.
-  3. **Behavior & UX:** Verifies `--help` structure, strict `"I don't know"` uncertainty refusal, graduated context modes (`careful`, `yolo`, `dry-run`), and triage routing.
-  4. **Security & Sandbox ([`tests/test_safety.py`](../tests/test_safety.py)):** Verifies Bubblewrap (`bwrap`) isolation flags, non-execution of `omarchy-*` scripts, ANSI/OSC escape stripping, Rust binary parity, and AST static quality invariants.
+- **5 Verification Axes ([`tests/test_vv_suite.py`](../tests/test_vv_suite.py)):**
+  1. **Axis 1 — Instantaneous Speed:** Interleaved `AB/BA` cold-start measurements (`~1–5 ms` Rust vs `~45–200 ms` Python).
+  2. **Axis 2 — Cache & Repeat-Query Memory:** Verifies SQLite WAL sliding expiration, `hit_count` repeat-query tracking, retention units (`m`, `h`, `D`, `M`), and non-caching of `"I don't know"`.
+  3. **Axis 3 — Safety, Triage & Edge-Case Rigor:** Verifies `--help` structure, strict `"I don't know"` uncertainty refusal, graduated context modes (`careful`, `yolo`, `dry-run`), and triage routing.
+  4. **Axis 4 — 'Wow' UX & Pre-IDK Escalation:** Verifies `🟢/🟡/🔴` traffic-light command safety badges, `<1 ms` offline `how explain` pipeline & flag anatomy, `how fix` offline diagnostics, Step 1 question refinement, and Step 2 cross-platform smarter model escalation.
+  5. **Axis 5 — 100-Query Benchmark Convergence & Security ([`tests/test_safety.py`](../tests/test_safety.py)):** Verifies 100-query benchmark category coverage, placeholder bash syntax normalization, Bubblewrap (`bwrap`) isolation flags, non-execution of `omarchy-*` scripts, Rust binary parity, and AST static quality invariants.
 
 </details>
 

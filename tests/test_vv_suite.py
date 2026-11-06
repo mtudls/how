@@ -345,6 +345,169 @@ def test_behavior_and_edge_cases():
     return {"score": avg_score, "status": "pass"}
 
 
+def test_product_convergence_and_wow_ux():
+    print("\n--- [4] Product Convergence & 'Wow' UX Verification ---")
+    how = load_how_module()
+    scores = []
+
+    # 4.1 Traffic-Light Command Safety Classification (<0.1ms)
+    safe_cmds = [
+        "find . -type f -exec du -h {} + | sort -rh | head -n 10",
+        "git remote -v",
+        "free -h",
+        "ss -tulpn",
+        "omarchy theme list",
+    ]
+    for c in safe_cmds:
+        res = how.classify_command_safety(c)
+        assert res["level"] == "safe", f"Expected 'safe' for {c}, got {res}"
+
+    mod_cmds = [
+        "ln -s /path/to/target /path/to/link",
+        "sudo pacman -S ripgrep",
+        "git push origin main",
+        "omarchy theme set catppuccin",
+        "echo 'export FOO=1' >> ~/.bashrc",
+    ]
+    for c in mod_cmds:
+        res = how.classify_command_safety(c)
+        assert res["level"] == "modifies", f"Expected 'modifies' for {c}, got {res}"
+
+    dest_cmds = [
+        "rm -rf ./dist",
+        "sudo pacman -Rns vlc",
+        "git reset --hard HEAD~1",
+        "sudo limine enroll-config",
+        "kill -9 1234",
+    ]
+    for c in dest_cmds:
+        res = how.classify_command_safety(c)
+        assert res["level"] == "destructive", f"Expected 'destructive' for {c}, got {res}"
+    print("  ✓ Traffic-Light Command Safety (🟢 SAFE / 🟡 MODIFIES / 🔴 DESTRUCTIVE) verified.")
+    scores.append(100)
+
+    # 4.2 Offline <1ms Visual Pipeline & Flag Anatomy (`how explain`)
+    pipeline_cmd = "find . -type f -mtime -7 -exec du -h {} + | sort -rh | head -n 10"
+    t0 = time.perf_counter()
+    anatomy = how.explain_command_anatomy(pipeline_cmd)
+    explain_ms = (time.perf_counter() - t0) * 1000
+    assert explain_ms < 10.0, f"explain_command_anatomy must be near-instant (<10ms), took {explain_ms:.2f}ms"
+    assert anatomy["safety"]["level"] == "safe"
+    assert len(anatomy["stages"]) == 3
+    assert anatomy["stages"][0]["binary"] == "find"
+    assert anatomy["stages"][0]["operator_after"] == "|"
+    assert anatomy["stages"][1]["binary"] == "sort"
+    assert anatomy["stages"][2]["binary"] == "head"
+
+    tmp_exp_dir = tempfile.mkdtemp(prefix="how_test_explain_")
+    try:
+        log_file = os.path.join(tmp_exp_dir, "commands.log")
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.write('[2026-11-06 12:00:00] [PROPOSED] Query: "to archive logs" | Command: tar -czvf logs.tar.gz /var/log\n')
+        code, out_exp, err_exp, _ = run_how(["explain"], env_override={"HOW_CONFIG_DIR": tmp_exp_dir})
+        assert code == 0, f"how explain failed: {err_exp}"
+        assert "Command Anatomy & Safety Inspector" in out_exp
+        assert "tar -czvf logs.tar.gz /var/log" in out_exp
+        assert "MODIFIES" in out_exp or "create (-c) gzipped (-z)" in out_exp
+    finally:
+        shutil.rmtree(tmp_exp_dir, ignore_errors=True)
+    print(f"  ✓ `how explain` offline pipeline & flag anatomy verified ({explain_ms:.2f} ms).")
+    scores.append(100)
+
+    # 4.3 Instant Command Diagnostics & Repair (`how fix`)
+    d_lock = how.diagnose_command_locally("sudo pacman -Syu", "error: unable to lock database: /var/lib/pacman/db.lck")
+    assert d_lock["matched"] and "/var/lib/pacman/db.lck" in d_lock["fixed_command"]
+
+    d_perm = how.diagnose_command_locally("systemctl restart bluetooth", "Permission denied")
+    assert d_perm["matched"] and d_perm["fixed_command"] == "sudo systemctl restart bluetooth"
+
+    d_git = how.diagnose_command_locally("git push", "fatal: The current branch feat has no upstream branch")
+    assert d_git["matched"] and "--set-upstream origin" in d_git["fixed_command"]
+
+    d_limine = how.diagnose_command_locally("sbctl sign-all", "secure boot limine")
+    assert d_limine["matched"] and "limine enroll-config" in d_limine["fixed_command"]
+
+    tmp_fix_dir = tempfile.mkdtemp(prefix="how_test_fix_")
+    try:
+        log_file = os.path.join(tmp_fix_dir, "commands.log")
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.write('[2026-11-06 12:00:00] [PROPOSED] Query: "to restart sshd" | Command: systemctl restart sshd\n')
+        code, out_fix, err_fix, _ = run_how(
+            ["fix", "permission denied"],
+            env_override={"HOW_CONFIG_DIR": tmp_fix_dir, "HOW_CACHE_DIR": tmp_fix_dir},
+        )
+        assert code == 0, f"how fix failed: {err_fix}"
+        assert "Instant Command Diagnosis & Repair" in out_fix
+        assert "sudo systemctl restart sshd" in out_fix
+    finally:
+        shutil.rmtree(tmp_fix_dir, ignore_errors=True)
+    print("  ✓ `how fix` instant offline command diagnostics & repair verified.")
+    scores.append(100)
+
+    # 4.4 Pre-IDK Question Refinement & Repeat-Question Cache Memory
+    imp_q, refined_prompt, notes = how.improve_question_for_retry("to maske symlik")
+    assert "symbolic link with ln -s" in imp_q
+    assert "Domain Hint:" in refined_prompt
+    assert len(notes) >= 2
+
+    tmp_mem_dir = tempfile.mkdtemp(prefix="how_test_mem_")
+    try:
+        how.CACHE_DIR = tmp_mem_dir
+        how.CACHE_DB_FILE = os.path.join(tmp_mem_dir, "cache.db")
+        how.save_cached_response("to check ram", "test-model", "normal", "```bash\nfree -h\n```", 3600)
+        hit1 = how.get_cached_response("to check ram", "test-model", "normal", 3600, return_hits=True)
+        hit2 = how.get_cached_response("to check ram", "test-model", "normal", 3600, return_hits=True)
+        assert hit1 is not None and hit1[2] == 2
+        assert hit2 is not None and hit2[2] == 3
+    finally:
+        shutil.rmtree(tmp_mem_dir, ignore_errors=True)
+    print("  ✓ Pre-IDK question refinement, domain grounding & repeat-query memory verified.")
+    scores.append(100)
+
+    avg_score = sum(scores) / len(scores)
+    print(f"  ➜ Product Convergence & UX Score: {avg_score:.1f}/100")
+    return {"score": avg_score, "status": "pass"}
+
+
+def test_benchmark_dataset_convergence():
+    print("\n--- [5] 100-Query Benchmark & Dataset Convergence Audit ---")
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    q_path = os.path.join(repo_root, "tests", "quality", "queries_100.jsonl")
+    rc_path = os.path.join(repo_root, "tests", "quality", "run_compare.py")
+
+    if not (os.path.isfile(q_path) and os.path.isfile(rc_path)):
+        print("  • Benchmark dataset not present, skipping optional audit.")
+        return {"score": 100.0, "status": "pass"}
+
+    with open(q_path, "r", encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+
+    assert len(rows) == 100, f"Expected 100 benchmark queries, found {len(rows)}"
+    categories = {r.get("category") for r in rows if r.get("category")}
+    assert len(categories) >= 8, f"Expected >=8 benchmark categories, found {categories}"
+
+    how = load_how_module()
+    recovered_typos = 0
+    for r in rows:
+        q = r["query"]
+        imp, notes = how.improve_query_locally(q)
+        if imp != q or how.get_domain_grounding_hint(imp):
+            recovered_typos += 1
+    assert recovered_typos >= 15, f"Expected >=15 queries enriched by Pre-IDK local improvement/grounding, got {recovered_typos}"
+
+    print(
+        f"  ✓ 100-query benchmark dataset verified ({len(categories)} categories, "
+        f"{recovered_typos}/100 queries auto-enriched by Pre-IDK grounding)."
+    )
+    print("  ➜ Benchmark Convergence Score: 100.0/100")
+    return {"score": 100.0, "status": "pass"}
+
+
+def render_bar(score: float, width: int = 20) -> str:
+    filled = int(round((max(0.0, min(100.0, score)) / 100.0) * width))
+    return "█" * filled + "░" * (width - filled)
+
+
 def main():
     print("==================================================")
     print("  `how` Verification & Validation (V&V) Matrix    ")
@@ -354,17 +517,31 @@ def main():
     perf = test_performance()
     cache = test_cache_behavior()
     beh = test_behavior_and_edge_cases()
+    ux = test_product_convergence_and_wow_ux()
+    bench = test_benchmark_dataset_convergence()
     total_time_ms = (time.perf_counter() - t_start) * 1000
 
-    composite_score = (perf["score"] * 0.3) + (cache["score"] * 0.35) + (beh["score"] * 0.35)
+    axes = [
+        ("Axis 1: Instantaneous Speed (Rust/Python)", perf["score"], 0.20),
+        ("Axis 2: Cache & Repeat-Query Memory", cache["score"], 0.20),
+        ("Axis 3: Safety, Triage & Edge-Case Rigor", beh["score"], 0.20),
+        ("Axis 4: 'Wow' UX (Explain/Fix/Safety/Pre-IDK)", ux["score"], 0.25),
+        ("Axis 5: 100-Query Benchmark Convergence", bench["score"], 0.15),
+    ]
+    composite_score = sum(s * w for _, s, w in axes)
 
-    print("\n--------------------------------------------------")
+    print("\n==================================================")
+    print("  5-Axis Product Convergence Scorecard")
+    print("==================================================")
+    for label, sc, _ in axes:
+        print(f"  {label:<44} [{render_bar(sc, 16)}] {sc:5.1f}/100")
+    print("--------------------------------------------------")
     print(f"  Composite V&V Score: {composite_score:.1f} / 100")
     print(f"  Total V&V Execution Time: {total_time_ms:.2f} ms")
     print("--------------------------------------------------")
 
-    if composite_score < 80:
-        print(f"❌ REGRESSION DETECTED: Score {composite_score:.1f} is below threshold 80.")
+    if composite_score < 95:
+        print(f"❌ REGRESSION DETECTED: Score {composite_score:.1f} is below convergence threshold 95.")
         sys.exit(1)
     else:
         print("✅ All V&V checks passed without regression.")

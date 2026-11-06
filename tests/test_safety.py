@@ -671,6 +671,39 @@ class TestSafetyAndSandbox(unittest.TestCase):
         cached_idk = self.how.get_cached_response(q_unknown, self.how.DEFAULT_MODEL, "zero", 3600)
         self.assertIsNone(cached_idk, "Uncertain 'I don't know' responses must never poison the cache")
 
+    def test_safety_badges_explain_fix_and_repeat_cache(self):
+        """Traffic-light safety badges, `how explain` pipeline anatomy, `how fix` diagnostics, and cache hit_count work."""
+        # 1. Traffic-light command safety tiers
+        self.assertEqual(self.how.classify_command_safety("ls -la /tmp")["level"], "safe")
+        self.assertEqual(self.how.classify_command_safety("ln -s a b")["level"], "modifies")
+        self.assertEqual(self.how.classify_command_safety("rm -rf /tmp/build")["level"], "destructive")
+        self.assertEqual(self.how.classify_command_safety("sudo pacman -Rns vlc")["level"], "destructive")
+
+        # 2. `explain_command_anatomy` pipeline splitting & flag breakdown
+        anat = self.how.explain_command_anatomy("find . -type f -exec du -h {} + | sort -rh | head -n 5")
+        self.assertEqual(anat["safety"]["level"], "safe")
+        self.assertEqual(len(anat["stages"]), 3)
+        self.assertEqual(anat["stages"][0]["binary"], "find")
+        self.assertEqual(anat["stages"][0]["operator_after"], "|")
+        self.assertEqual(anat["stages"][1]["binary"], "sort")
+        self.assertEqual(anat["stages"][2]["binary"], "head")
+
+        # 3. `diagnose_command_locally` offline repair rules
+        diag_perm = self.how.diagnose_command_locally("systemctl restart nginx", "Permission denied")
+        self.assertTrue(diag_perm["matched"])
+        self.assertEqual(diag_perm["fixed_command"], "sudo systemctl restart nginx")
+
+        diag_lock = self.how.diagnose_command_locally("sudo pacman -Syu", "unable to lock database /var/lib/pacman/db.lck")
+        self.assertTrue(diag_lock["matched"])
+        self.assertIn("/var/lib/pacman/db.lck", diag_lock["fixed_command"])
+
+        # 4. Repeat-query cache hit_count tracking
+        self.how.save_cached_response("to list ports", "test-model", "normal", "```bash\nss -tulpn\n```", 3600)
+        h1 = self.how.get_cached_response("to list ports", "test-model", "normal", 3600, return_hits=True)
+        h2 = self.how.get_cached_response("to list ports", "test-model", "normal", 3600, return_hits=True)
+        self.assertEqual(h1[2], 2)
+        self.assertEqual(h2[2], 3)
+
     def test_static_code_quality_and_bandit_invariants(self):
         """AST & static check across all repo Python files for syntax, single imports, and zero eval/exec."""
         import ast

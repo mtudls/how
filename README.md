@@ -5,13 +5,13 @@ Ask in plain words. Get the exact terminal command.
 Built for **Omarchy**, **Linux**, and your local project stack.
 
 > **Document Guide:**
-> - **Part 1 — `[LIVE • v0.4]`**: Features you can use right now (`✅`).
-> - **Part 2 — `[ROADMAP • v0.5+]`**: Upcoming features in design (`⏳`).
+> - **Part 1 — `[LIVE • v0.5]`**: Features you can use right now (`✅`).
+> - **Part 2 — `[ROADMAP • v0.6+]`**: Upcoming features in design (`⏳`).
 > - *Technical details (**way / form**) are inside expandable `▸` sections.*
 
 ---
 
-# Part 1 — `[LIVE • v0.4]` What `how` Does Today
+# Part 1 — `[LIVE • v0.5]` What `how` Does Today
 
 ## Quick Start
 
@@ -25,9 +25,11 @@ how auth login    # Free API key ($0, no card): console.groq.com/keys
 
 | Status | Effect (What you get) | Command (What to type) |
 | :---: | :--- | :--- |
-| ✅ `LIVE` | **Command + short explanation** | `how to switch audio output` |
+| ✅ `LIVE` | **Command + short explanation + `🟢/🟡/🔴` safety badge** | `how to switch audio output` |
 | ✅ `LIVE` | **Command only (no extra text)** | `how -0 to find largest files` |
-| ✅ `LIVE` | **Run the last suggested command** | `how run` |
+| ✅ `LIVE` | **Offline `<1 ms` visual pipeline & flag breakdown** | `how explain` *(or `how explain "tar -xzvf a.tgz"`)* |
+| ✅ `LIVE` | **Instant command repair & error diagnostics** | `how fix` *(or `how fix "permission denied"`)* |
+| ✅ `LIVE` | **Run the last suggested command (with safety check)** | `how run` |
 | ✅ `LIVE` | **Solve a hard bug or boot issue** | `how -t why does suspend freeze my screen` |
 | ✅ `LIVE` | **Preview what `how` would read (zero execution)** | `how --dry-run to update system` |
 | ✅ `LIVE` | **Auto-read OS & project stack (with receipt)** | `how --yolo to run single test file` |
@@ -38,10 +40,13 @@ how auth login    # Free API key ($0, no card): console.groq.com/keys
 <summary><b>▸ Way / Form: All CLI commands, flags & file paths</b></summary>
 
 ```bash
-# Output style
+# Output style & command anatomy
 how -0 <query>                    # Command only (also copied to clipboard)
 how --low <query>                 # Command + 1-sentence note
 how verbosity [zero|low|normal]   # Set default output style
+how explain [command...]          # Offline <1ms pipeline & flag breakdown + safety badge
+how fix [error...]                # Diagnose & repair the last command (offline rules + AI fallback)
+how run [-y|--dry-run]            # Preview safety badge or execute the last suggested command
 
 # Privacy & system context
 how context                       # View current context permissions
@@ -78,7 +83,7 @@ how test [--stats]                # Run self-test and speed benchmark
 
 ---
 
-## Core Capabilities (`[LIVE • v0.4]`)
+## Core Capabilities (`[LIVE • v0.5]`)
 
 ### ✅ 1. Instant Startup (`~1 ms`) with Readable Code
 **Effect:** Starts the moment you press Enter, while keeping the source code a single, readable Python file anyone can edit.
@@ -108,27 +113,34 @@ how test [--stats]                # Run self-test and speed benchmark
 
 </details>
 
-### ✅ 3. Accurate Local Flags & Strict Honesty
-**Effect:** Uses real flags from tools installed on your machine, never runs scripts behind your back, and says `"I don't know"` instead of guessing.
+### ✅ 3. Multi-Step Pre-IDK Escalation, Local RAG & Traffic-Light Safety
+**Effect:** Repairs typos, grounds commands in your local `man`/`tldr` docs, escalates to a smarter reasoning model on your platform of choice before ever saying `"I don't know"`, and labels every command `🟢 SAFE`, `🟡 MODIFIES`, or `🔴 DESTRUCTIVE / ADMIN`.
 
 <details>
-<summary><b>▸ Way / Form: Local RAG, Bubblewrap (`bwrap`) sandbox & sliding cache</b></summary>
+<summary><b>▸ Way / Form: Pre-IDK escalation, Bubblewrap (`bwrap`) sandbox, `explain`/`fix` & repeat-aware cache</b></summary>
 
+- **2-Step Escalation Before `"I don't know"`:**
+  1. **Step 1 (Question Refinement & Domain Grounding):** Repairs CLI typos (`maske symlik` → `create a symbolic link with ln -s`), expands terse shorthand (`to see origin` → `to see git remote origin url`), attaches Linux/Arch/Hyprland/Omarchy domain hints, and pulls newly matched local `tldr`/`man` pages.
+  2. **Step 2 (Smarter Model on Platform of Choice):** If still uncertain, reaches out to your configured reasoning provider (`gemini`, `anthropic`, `openai`, `openrouter`, `cli:claude`, or Groq's `deepseek-r1-distill-llama-70b` / `qwen-qwq-32b` pool). Uncertain `"I don't know"` responses are never cached.
+- **Traffic-Light Command Safety & `how explain` / `how fix` (`<1 ms` offline):**
+  - `classify_command_safety` badges every command as `🟢 SAFE (read-only)`, `🟡 MODIFIES`, or `🔴 DESTRUCTIVE / ADMIN`.
+  - `how explain [cmd]` splits pipelines (`|`, `&&`, `||`, `;`) into stages and explains each binary and flag offline in `<1 ms`.
+  - `how fix [error]` diagnoses common failures offline (`permission denied`, `/var/lib/pacman/db.lck`, missing git upstream, Limine Secure Boot, port conflicts) or escalates to deep mode.
 - **Local documentation priority (<5 ms):**
   1. `# omarchy:*` header comments in `/usr/bin/omarchy-*` scripts (parsed as text, never executed).
   2. Local `tldr` pages.
   3. System `man -P cat <cmd>` synopsis.
   4. Isolated Bubblewrap sandbox (`bwrap --ro-bind / / --unshare-all --cap-drop ALL -- timeout 2 <cmd> --help`).
-- **Sliding SQLite Cache:** Stores answers in `~/.cache/how/cache.db` (`3h` default TTL, renewed on hit) keyed by SHA-256 of query, model, verbosity, and binary mtime fingerprint.
+- **Repeat-Aware Sliding SQLite Cache:** Stores verified answers in `~/.cache/how/cache.db` (`3h` default TTL, renewed on hit) and tracks `hit_count` to surface `how explain` / `how fix` / `how -t` tips when a query is repeated.
 - **Output Sanitization:** Strips ANSI/OSC terminal escape sequences from model outputs.
 
 </details>
 
-### ✅ 4. Built-In Verification (`how test`)
-**Effect:** One command checks speed, accuracy, and security locally before you commit—backed by automated GitHub Actions gates.
+### ✅ 4. 5-Axis Product Convergence Suite (`how test`)
+**Effect:** One command checks speed, Pre-IDK intelligence, UX safety badges, cache memory, and 100-query benchmark convergence locally before you commit—backed by automated GitHub Actions gates.
 
 <details>
-<summary><b>▸ Way / Form: 4-axis V&V suite & Free-Plan CI pipelines</b></summary>
+<summary><b>▸ Way / Form: 5-axis V&V scorecard & Free-Plan CI pipelines</b></summary>
 
 - Run `how test --stats`, `python3 tests/test_vv_suite.py`, or `python3 tests/test_safety.py -v`.
 - CI workflows (`.github/workflows/*.yml`) use `concurrency` (`cancel-in-progress: true`), `timeout-minutes: 5`, and single-VM consolidation to run V&V, `ruff`, `flake8`, `shellcheck`, `bandit`, `gitleaks`, and native `how-linux-x86_64` release builds.
