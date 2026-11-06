@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -133,18 +133,35 @@ def strip_think_blocks(text: str) -> str:
     return cleaned or text.strip()
 
 
+def is_uncertain_response(text: str) -> bool:
+    """Returns True if the model response is empty or indicates 'I don't know' / uncertainty."""
+    if not text:
+        return True
+    cleaned = strip_think_blocks(strip_control_sequences(text)).strip()
+    if not cleaned:
+        return True
+    low = cleaned.lower().rstrip(".!?:;\"'")
+    if low in ("i don't know", "i dont know", "idk", "not sure", "i am not sure", "i'm not sure"):
+        return True
+    if "```" not in cleaned and (low.startswith("i don't know") or low.startswith("i dont know")):
+        return True
+    return False
+
+
 def get_system_prompt(verbosity="normal", deep_mode=False, env_context=""):
     """Returns the dedicated system prompt for the requested verbosity mode (zero, low, normal)."""
     base = """You are `how`, an ultra-fast, direct CLI assistant that teaches the user "how to do sht in ..." their exact OS, terminal, and project stack.
 Take advantage of Omarchy & Linux conventions when relevant:
+- Omarchy is an Arch Linux + Hyprland + UWSM + PipeWire desktop system.
 - Omarchy CLI: `omarchy` (`omarchy update`, `omarchy theme list|set <name>`, `omarchy font list|set`, `omarchy audio`, `omarchy brightness`, `omarchy bluetooth`, `omarchy battery`, `omarchy capture screenshot|screenrecording|qr`, `omarchy plugin add <repo-url> --enable`, `omarchy pkg add <pkg>`, `omarchy commands --all`).
+- Standard Linux, Arch & POSIX fallback: Whenever no dedicated `omarchy` subcommand exists for a task, ALWAYS provide the standard Arch Linux (`pacman`, `yay`), systemd (`systemctl`, `journalctl`, `hostnamectl`, `timedatectl`, `loginctl`), Hyprland/Wayland (`hyprctl`, `grim`, `slurp`, `wl-copy`, `xdg-settings`, `xdg-mime`), Git (`git`, `gh`), networking (`ip`, `ss`, `nmcli`, `curl`, `dig`, `ufw`), or POSIX CLI command (`ln -s`, `free -h`, `df -h`, `du -sh`, `find`, `grep`, `tar`, `chmod`, `chown`, `ps`, `kill`, `lsof`). Never say "I don't know" merely because the prompt mentions "In Omarchy console" for a general Linux or developer task.
 - Hyprland & Desktop: `Super + Space` (launcher), `Super + K` (live keybindings menu), `Super + Shift + C` (reload config), user bindings in `~/.config/hypr/bindings.conf` (or `bindings.lua`), syntax check via `hyprctl configerrors`, screenshot/recording dir overrides in `~/.config/uwsm/env.d/`.
 - Common Omarchy & Arch fixes: password lockout reset via TTY (`Ctrl+Alt+F3`) and `faillock --reset --user $USER`; Limine Secure Boot via `limine enroll-config` before `sbctl` (never sign kernels manually); PipeWire audio switching via `omarchy-audio-output-switch` or `wpctl`; package management via `pacman` / `yay`; GitHub account switch via `gh auth switch`.
 - Stack awareness: When local project stack context is provided (e.g. uv, poetry, pnpm, bun, cargo, go, rails, docker), tailor commands directly to that tool (e.g. `uv run pytest`, `pnpm test`, `cargo test`, `bundle exec rails`).
 Answer concisely and directly in English (or in the language asked if the user explicitly asks in another language).
 
 CRITICAL RULE ON UNCERTAINTY:
-If you are not confident or not sure about the answer, command, or how to accomplish the task, do NOT invent or guess. You MUST answer strictly with: "I don't know"."""
+If you are genuinely not confident or the request refers to a fictional, unknown, or non-existent tool/concept, do NOT invent or guess. You MUST answer strictly with: "I don't know"."""
 
     if deep_mode:
         base += """
@@ -1064,9 +1081,17 @@ def resolve_deep_provider(cfg=None) -> tuple[str, str, str]:
     return "groq", DEFAULT_THINK_MODEL, get_api_key() or ""
 
 
-def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal", cfg: dict = None) -> tuple[str, str]:
+def ask_deep_model(
+    sys_prompt: str,
+    user_prompt: str,
+    verbosity: str = "normal",
+    cfg: dict = None,
+    exclude_models: set = None,
+    defer_uncertain: bool = False,
+) -> tuple[str, str]:
     """
     Executes query using the Deep Thinking tier (external provider, CLI agent, or Groq reasoning model).
+    Skips any Groq model in `exclude_models` and tries the next reasoning model if a candidate returns 'I don't know'.
     Returns (cleaned_response_text, model_label).
     """
     import json
@@ -1074,6 +1099,7 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
 
     if cfg is None:
         cfg = load_config()
+    excluded = set(exclude_models or ())
 
     def _post_json(url, payload, extra_headers, timeout=45):
         req = urllib.request.Request(
@@ -1086,11 +1112,12 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
 
     def _finish(raw_text, label):
         clean = strip_think_blocks(strip_control_sequences(raw_text))
-        if verbosity != "zero":
+        if verbosity != "zero" and not (defer_uncertain and is_uncertain_response(clean)):
             print(clean + f"{RESET}\n")
         return clean, label
 
     provider, model_name, credential = resolve_deep_provider(cfg)
+    last_uncertain = ("", "none")
 
     if provider == "gemini" and credential:
         try:
@@ -1102,7 +1129,10 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
                 },
                 {},
             )
-            return _finish(data["candidates"][0]["content"]["parts"][0]["text"], f"gemini:{model_name}")
+            txt = data["candidates"][0]["content"]["parts"][0]["text"]
+            if not is_uncertain_response(txt):
+                return _finish(txt, f"gemini:{model_name}")
+            last_uncertain = (strip_think_blocks(strip_control_sequences(txt)), f"gemini:{model_name}")
         except Exception:
             pass
 
@@ -1114,7 +1144,10 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
                 {"x-api-key": credential, "anthropic-version": "2023-06-01"},
             )
             texts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
-            return _finish("\n".join(texts), f"anthropic:{model_name}")
+            txt = "\n".join(texts)
+            if not is_uncertain_response(txt):
+                return _finish(txt, f"anthropic:{model_name}")
+            last_uncertain = (strip_think_blocks(strip_control_sequences(txt)), f"anthropic:{model_name}")
         except Exception:
             pass
 
@@ -1126,7 +1159,10 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
                 {"model": model_name, "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}]},
                 {"Authorization": f"Bearer {credential}"},
             )
-            return _finish(data["choices"][0]["message"].get("content", ""), f"{provider}:{model_name}")
+            txt = data["choices"][0]["message"].get("content", "")
+            if not is_uncertain_response(txt):
+                return _finish(txt, f"{provider}:{model_name}")
+            last_uncertain = (strip_think_blocks(strip_control_sequences(txt)), f"{provider}:{model_name}")
         except Exception:
             pass
 
@@ -1141,20 +1177,33 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=45,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
-                    return _finish(proc.stdout.strip(), f"cli:{bin_name}")
+                    txt = proc.stdout.strip()
+                    if not is_uncertain_response(txt):
+                        return _finish(txt, f"cli:{bin_name}")
+                    last_uncertain = (strip_think_blocks(strip_control_sequences(txt)), f"cli:{bin_name}")
             except Exception:
                 pass
 
     groq_key = get_api_key()
     if not groq_key:
+        if last_uncertain[0]:
+            return _finish(last_uncertain[0], last_uncertain[1])
         return "", "none"
 
-    deep_pool = [model_name] if (provider == "groq" and model_name) else []
-    for m in (DEFAULT_THINK_MODEL, "qwen-qwq-32b", "openai/gpt-oss-120b"):
-        if m not in deep_pool:
+    deep_pool = []
+    if provider == "groq" and model_name and model_name not in excluded:
+        deep_pool.append(model_name)
+    for m in (DEFAULT_THINK_MODEL, "qwen-qwq-32b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"):
+        if m not in deep_pool and m not in excluded:
             deep_pool.append(m)
+    if not deep_pool and provider == "groq" and model_name:
+        deep_pool.append(model_name)
 
+    tried_in_deep = 0
     for cand_model in deep_pool:
+        if tried_in_deep >= 2:
+            break
+        tried_in_deep += 1
         try:
             data = _post_json(
                 GROQ_API_URL,
@@ -1167,10 +1216,15 @@ def ask_deep_model(sys_prompt: str, user_prompt: str, verbosity: str = "normal",
                 {"Authorization": f"Bearer {groq_key}"},
                 timeout=40,
             )
-            return _finish(data["choices"][0]["message"].get("content", ""), cand_model)
+            txt = data["choices"][0]["message"].get("content", "")
+            if not is_uncertain_response(txt):
+                return _finish(txt, cand_model)
+            last_uncertain = (strip_think_blocks(strip_control_sequences(txt)), cand_model)
         except Exception:
             continue
 
+    if last_uncertain[0]:
+        return _finish(last_uncertain[0], last_uncertain[1])
     return "", "none"
 
 
@@ -1805,8 +1859,8 @@ def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash=
 
 
 def save_cached_response(query, model, verbosity, response_text, retention_seconds, prompt_hash="", docs_hash=""):
-    """Stores response in SQLite cache with TTL expiration timestamp."""
-    if retention_seconds <= 0 or not response_text:
+    """Stores response in SQLite cache with TTL expiration timestamp. Never caches uncertain ('I don't know') responses."""
+    if retention_seconds <= 0 or not response_text or is_uncertain_response(response_text):
         return
     import time
     try:
@@ -2209,6 +2263,177 @@ def format_query(raw_query):
     return f"In Omarchy console: {q}"
 
 
+TYPO_CORRECTIONS = {
+    "pricate": "private",
+    "orign": "origin",
+    "unistall": "uninstall",
+    "claudflare": "cloudflare",
+    "jetrbrains": "jetbrains",
+    "carret": "cursor",
+    "otput": "output",
+    "crate": "create",
+    "maske": "make",
+    "nad": "and",
+    "repositry": "repository",
+    "symlik": "symlink",
+    "brighness": "brightness",
+    "bluetoth": "bluetooth",
+    "screenshoot": "screenshot",
+    "passowrd": "password",
+    "kernal": "kernel",
+    "dockr": "docker",
+    "kubeclt": "kubectl",
+    "systmctl": "systemctl",
+    "pacamn": "pacman",
+    "hyprlandd": "hyprland",
+}
+
+
+def improve_query_locally(raw_query: str) -> tuple[str, list[str]]:
+    """
+    Repairs common CLI typos and expands ambiguous shorthand before retrying an uncertain query.
+    Returns (improved_query, list_of_improvement_notes).
+    """
+    import re
+    q = raw_query.strip()
+    notes = []
+
+    def _replace_word(match):
+        word = match.group(0)
+        low = word.lower()
+        if low in TYPO_CORRECTIONS:
+            fixed = TYPO_CORRECTIONS[low]
+            notes.append(f"typo '{word}' -> '{fixed}'")
+            return fixed
+        return word
+
+    improved = re.sub(r"[a-zA-Z0-9_]+", _replace_word, q)
+    imp_low = improved.lower().strip(" ?!.")
+
+    shorthand_expansions = [
+        (r"^(?:to\s+)?see\s+origin$", "to see git remote origin url", "expanded git origin shorthand"),
+        (r"^(?:to\s+)?check\s+origin$", "to check git remote origin url", "expanded git origin shorthand"),
+        (r"^(?:to\s+)?(?:make|create)\s+symlink$", "to create a symbolic link with ln -s", "expanded symlink shorthand"),
+        (r"^(?:to\s+)?add\s+private\s+repo\b", "to create or add a private git repository with gh or git", "clarified private git repo intent"),
+    ]
+    for pat, replacement, note in shorthand_expansions:
+        if re.search(pat, imp_low):
+            improved = re.sub(pat, replacement, imp_low, flags=re.IGNORECASE)
+            notes.append(note)
+            break
+
+    return improved, notes
+
+
+def get_domain_grounding_hint(query: str) -> str:
+    """Returns concise, authoritative CLI domain grounding hints for Linux, Arch, Hyprland & Omarchy tasks."""
+    q_low = query.lower()
+    hints = []
+    rules = [
+        (("symlink", "symbolic link"), "Use `ln -s <target> <link_name>` to create a symbolic link."),
+        (("origin", "git remote", "remote url"), "Use `git remote -v` or `git remote get-url origin` to inspect Git remote URLs, or `git remote set-url origin <url>` to change it."),
+        (("private repo", "gh repo", "github repo"), "Use `gh repo create <name> --private --source=. --remote=origin` or `git remote add origin <url>`."),
+        (("default browser", "web browser"), "On Arch/Omarchy, check or set default browser via `xdg-settings get default-web-browser` or `xdg-settings set default-web-browser <browser.desktop>`."),
+        (("uninstall", "remove package", "delete package"), "On Arch/Omarchy, uninstall packages via `sudo pacman -Rns <package>` or `yay -Rns <package>`."),
+        (("memory", "ram", "free mem"), "Use `free -h` or `btop` to inspect RAM and swap usage."),
+        (("disk", "storage", "free space", "largest file"), "Use `df -h` for filesystem usage, `du -sh * | sort -h` for directory sizes, or `find . -type f -exec du -h {} + | sort -rh | head -n 10`."),
+        (("hostname",), "Use `hostnamectl` to view or `sudo hostnamectl set-hostname <name>` to set the system hostname."),
+        (("timezone", "time zone", "clock"), "Use `timedatectl` or `sudo timedatectl set-timezone <Region/City>`."),
+        (("screenshot", "screen capture", "capture screen"), "In Omarchy/Hyprland, use `omarchy capture screenshot` or `grim -g \"$(slurp)\" screenshot.png`."),
+        (("audio", "sound", "speaker", "headphone", "volume"), "In Omarchy/PipeWire, use `omarchy audio`, `omarchy-audio-output-switch`, or `wpctl status` / `wpctl set-default <id>`."),
+        (("theme", "wallpaper", "colorscheme"), "In Omarchy, use `omarchy theme list` and `omarchy theme set <theme>`."),
+        (("keybind", "shortcut", "hotkey", "bindings"), "In Omarchy/Hyprland, press `Super + K`, check `~/.config/hypr/bindings.conf`, or run `hyprctl binds`."),
+        (("bluetooth",), "In Omarchy/Arch, use `omarchy bluetooth` or `bluetoothctl`."),
+        (("wifi", "wi-fi", "wireless", "network"), "Use `nmcli device wifi list` and `nmcli device wifi connect <SSID> password <pass>` or `ip addr`."),
+        (("port", "listening", "open port"), "Use `ss -tulpn` or `lsof -i :<port>` to inspect listening ports and processes."),
+    ]
+    for keywords, hint in rules:
+        if any(k in q_low for k in keywords):
+            hints.append(hint)
+    return "\n".join(hints[:2])
+
+
+def rewrite_query_with_llm(raw_query: str, api_key: str = None, cfg: dict = None) -> str:
+    """Optionally asks the fast triage model to reformulate an ambiguous CLI question into a clear technical request."""
+    if not api_key:
+        return ""
+    if os.environ.get("HOW_LLM_REWRITE") not in ("1", "true", "yes") and not (cfg and cfg.get("llm_query_rewrite")):
+        return ""
+    import json
+    import urllib.request
+
+    triage_model = (cfg or {}).get("triage_model", DEFAULT_TRIAGE_MODEL)
+    payload = {
+        "model": triage_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite the user's unclear or typo-ridden Linux/Omarchy CLI question into a single clear, "
+                    "unambiguous 1-line technical question. Fix typos and name the standard Linux/Arch/Git tool "
+                    "if obvious. Output ONLY the rewritten question."
+                ),
+            },
+            {"role": "user", "content": raw_query},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 45,
+    }
+    req = urllib.request.Request(
+        GROQ_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={**COMMON_HEADERS, "Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                rewritten = data["choices"][0]["message"].get("content", "").strip().strip('"')
+                if rewritten and len(rewritten) < 160:
+                    return rewritten
+    except Exception:
+        pass
+    return ""
+
+
+def improve_question_for_retry(raw_query: str, env_context: str = "", api_key: str = None, cfg: dict = None) -> tuple[str, str, list[str]]:
+    """
+    Intermediate Step 1 before 'I don't know':
+    Improves the question (fixing typos, expanding shorthand, attaching domain grounding and newly discovered local CLI docs).
+    Returns (improved_query, refined_user_prompt, notes).
+    """
+    improved_q, notes = improve_query_locally(raw_query)
+    llm_rewritten = rewrite_query_with_llm(improved_q, api_key=api_key, cfg=cfg)
+    if llm_rewritten and llm_rewritten.lower() != improved_q.lower():
+        improved_q = llm_rewritten
+        notes.append("LLM query reformulation")
+
+    domain_hint = get_domain_grounding_hint(improved_q)
+    if domain_hint:
+        notes.append("attached Linux/Omarchy domain hint")
+
+    refined_prompt = format_query(improved_q)
+    refined_prompt += (
+        "\n\nClarification: Omarchy is an Arch Linux + Hyprland system. "
+        "If no dedicated `omarchy` subcommand exists for this request, provide the standard Arch Linux, "
+        "systemd, Hyprland, Git, or POSIX CLI command."
+    )
+    if domain_hint:
+        refined_prompt += f"\n\nDomain Hint:\n{domain_hint}"
+    if env_context:
+        refined_prompt += f"\n\nEnvironment & Project Stack:\n{env_context}"
+
+    extra_docs = get_system_docs_context(improved_q)
+    if extra_docs:
+        refined_prompt += f"\n\nContext from local system documentation:\n{extra_docs}"
+        notes.append("attached local CLI docs for refined terms")
+
+    if not notes:
+        notes.append("added Arch Linux / Hyprland / POSIX CLI disambiguation")
+
+    return improved_q, refined_prompt, notes
+
+
 def log_command_proposal(query, command, executed=False):
     """Logs proposed command to ~/.config/how/commands.log."""
     import time
@@ -2377,12 +2602,17 @@ def emit_command(cmd, query="", verbosity="normal", is_cached=False, raw_text=""
             print(text + "\n")
 
 
-def stream_groq_response(req, verbosity="normal"):
-    """Streams SSE chunks from Groq API, stripping control sequences on the fly."""
+def stream_groq_response(req, verbosity="normal", defer_uncertain=True):
+    """
+    Streams SSE chunks from Groq API, stripping control sequences on the fly.
+    When `defer_uncertain=True`, buffers initial short output (<= 28 chars) so an uncertain
+    'I don't know' response is not flashed to stdout before intermediate escalation steps run.
+    """
     import json
     import urllib.request
 
     full_response = []
+    flushed = False
     with urllib.request.urlopen(req, timeout=30) as response:
         for line in response:
             line = line.decode("utf-8").strip()
@@ -2396,17 +2626,34 @@ def stream_groq_response(req, verbosity="normal"):
                     clean_delta = strip_control_sequences(raw_delta)
                     full_response.append(clean_delta)
                     if verbosity != "zero":
-                        sys.stdout.write(clean_delta)
-                        sys.stdout.flush()
+                        if not defer_uncertain:
+                            sys.stdout.write(clean_delta)
+                            sys.stdout.flush()
+                            flushed = True
+                        else:
+                            joined_so_far = "".join(full_response)
+                            if flushed:
+                                sys.stdout.write(clean_delta)
+                                sys.stdout.flush()
+                            elif len(joined_so_far) > 28 or "```" in joined_so_far:
+                                sys.stdout.write(joined_so_far)
+                                sys.stdout.flush()
+                                flushed = True
                 except Exception:
                     pass
+    final_text = strip_control_sequences("".join(full_response))
     if verbosity != "zero":
-        print(f"{RESET}\n")
-    return strip_control_sequences("".join(full_response))
+        if flushed:
+            print(f"{RESET}\n")
+        elif not (defer_uncertain and is_uncertain_response(final_text)):
+            sys.stdout.write(final_text)
+            sys.stdout.flush()
+            print(f"{RESET}\n")
+    return final_text
 
 
 # -----------------------------------------------------------------------------
-# Main Query Execution (Cache -> Triage -> Fast Groq / Deep Thinking)
+# Main Query Execution (Cache -> Triage -> Fast Groq / Pre-IDK Escalation / Deep Thinking)
 # -----------------------------------------------------------------------------
 
 def ask_groq(
@@ -2419,6 +2666,7 @@ def ask_groq(
     force_context=False,
     context_mode_override=None,
     dry_run=False,
+    no_escalate=False,
 ):
     import hashlib
     import json
@@ -2527,7 +2775,7 @@ def ask_groq(
             print()
         deep_text, used_label = ask_deep_model(deep_sys, optimized_prompt, verbosity=verbosity, cfg=cfg)
         if deep_text.strip():
-            if not bypass_cache:
+            if not bypass_cache and not is_uncertain_response(deep_text):
                 save_cached_response(
                     raw_query, cache_model_key, verbosity, deep_text, retention_sec,
                     prompt_hash=prompt_hash, docs_hash=docs_hash,
@@ -2540,6 +2788,11 @@ def ask_groq(
     initial_model = model
     current_model = model
     fallback_pool = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    disable_escalation = (
+        no_escalate
+        or os.environ.get("HOW_NO_ESCALATE") in ("1", "true", "yes")
+        or bool(cfg.get("no_escalate", False))
+    )
 
     while True:
         tried_models.add(current_model)
@@ -2573,9 +2826,62 @@ def ask_groq(
             print()
 
         try:
-            full_text = stream_groq_response(req, verbosity=verbosity)
+            full_text = stream_groq_response(req, verbosity=verbosity, defer_uncertain=not disable_escalation)
 
-            if not bypass_cache and full_text.strip():
+            # Intermediate Steps before returning "I don't know"
+            if is_uncertain_response(full_text) and not disable_escalation:
+                # Step 1: Improve question (typo repair, shorthand expansion, domain hints, refined local docs) & retry
+                improved_q, refined_prompt, notes = improve_question_for_retry(
+                    raw_query, env_context=env_context, api_key=api_key, cfg=cfg
+                )
+                if verbosity != "zero":
+                    note_str = ", ".join(notes[:2])
+                    q_diff = f' -> "{improved_q}"' if improved_q.lower() != raw_query.strip().lower() else ""
+                    print(f"  {YELLOW}🔄 Step 1/2 (Question Refinement):{RESET} {DIM}{note_str}{q_diff}{RESET}")
+
+                retry_payload = {
+                    "model": current_model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": refined_prompt},
+                    ],
+                    "stream": True,
+                    "temperature": 0.1,
+                }
+                retry_req = urllib.request.Request(
+                    GROQ_API_URL,
+                    data=json.dumps(retry_payload).encode("utf-8"),
+                    headers=headers,
+                )
+                try:
+                    retry_text = stream_groq_response(retry_req, verbosity=verbosity, defer_uncertain=True)
+                    if retry_text.strip() and not is_uncertain_response(retry_text):
+                        full_text = retry_text
+                except Exception:
+                    pass
+
+                # Step 2: Reach out to a smarter reasoning model (on configured platform or Groq deep pool)
+                if is_uncertain_response(full_text):
+                    prov, d_mod, _ = resolve_deep_provider(cfg)
+                    if verbosity != "zero":
+                        print(f"  {MAGENTA}🧠 Step 2/2 (Smarter Model Escalation):{RESET} {DIM}consulting {prov}:{d_mod}...{RESET}\n")
+                    deep_sys = get_system_prompt(verbosity, deep_mode=True, env_context=env_context)
+                    deep_text, _ = ask_deep_model(
+                        deep_sys,
+                        refined_prompt,
+                        verbosity=verbosity,
+                        cfg=cfg,
+                        exclude_models=tried_models,
+                        defer_uncertain=True,
+                    )
+                    if deep_text.strip() and not is_uncertain_response(deep_text):
+                        full_text = deep_text
+                    elif verbosity != "zero":
+                        # All intermediate steps still uncertain -> print honest "I don't know"
+                        final_uncertain = (deep_text or full_text or "I don't know").strip()
+                        print(final_uncertain + f"{RESET}\n")
+
+            if not bypass_cache and full_text.strip() and not is_uncertain_response(full_text):
                 save_cached_response(
                     raw_query, current_model, verbosity, full_text, retention_sec,
                     prompt_hash=prompt_hash, docs_hash=docs_hash,
@@ -2959,6 +3265,7 @@ def parse_cli_args(raw_args):
     force_context = False
     context_mode_override = None
     dry_run = False
+    no_escalate = False
     args = []
 
     if len(raw_args) == 1 and raw_args[0] in ("--version", "-V", "version"):
@@ -3014,6 +3321,9 @@ def parse_cli_args(raw_args):
             i += 1
         elif a_lower == "--dry-run":
             dry_run = True
+            i += 1
+        elif a_lower == "--no-escalate":
+            no_escalate = True
             i += 1
         elif a_lower in ("-v", "--verbosity"):
             if i + 1 < len(raw_args):
@@ -3074,6 +3384,7 @@ def parse_cli_args(raw_args):
         "force_context": force_context,
         "context_mode_override": context_mode_override,
         "dry_run": dry_run,
+        "no_escalate": no_escalate,
     }
     return opts, args
 
@@ -3264,6 +3575,7 @@ def main():
         force_context=opts.get("force_context", False),
         context_mode_override=opts.get("context_mode_override"),
         dry_run=opts.get("dry_run", False),
+        no_escalate=opts.get("no_escalate", False),
     )
 
 

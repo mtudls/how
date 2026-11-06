@@ -423,16 +423,31 @@ fn print_context_dry_run_plan(c: &Colors, query: &str) {{
 }}
 
 fn delegate_to_python(args: &[String]) -> ! {{
-    // Pass embedded Python script via -c with exact argv parity and repo directory context
+    // Materialize embedded Python source to a version+size-keyed temp file so we never hit
+    // Linux's 128KB MAX_ARG_STRLEN single-argv limit on `execve`.
     let mut cmd = Command::new("python3");
     if env::var_os("HOW_REPO_DIR").is_none() {{
         cmd.env("HOW_REPO_DIR", SOURCE_REPO_DIR);
     }}
-    let err = cmd
-        .arg("-c")
-        .arg(EMBEDDED_PYTHON_SOURCE)
-        .args(args)
-        .exec();
+    let runtime_file = env::temp_dir().join(format!(
+        "how_embedded_{{}}_s{{}}.py",
+        VERSION,
+        EMBEDDED_PYTHON_SOURCE.len()
+    ));
+    let needs_write = match fs::metadata(&runtime_file) {{
+        Ok(m) => m.len() != EMBEDDED_PYTHON_SOURCE.len() as u64,
+        Err(_) => true,
+    }};
+    if needs_write {{
+        let _ = fs::write(&runtime_file, EMBEDDED_PYTHON_SOURCE);
+    }}
+    if runtime_file.is_file() {{
+        let err = cmd.arg(&runtime_file).args(args).exec();
+        eprintln!("Failed to execute python3 runtime: {{}}", err);
+        std::process::exit(1);
+    }}
+    let repo_script = Path::new(SOURCE_REPO_DIR).join("how");
+    let err = cmd.arg(&repo_script).args(args).exec();
     eprintln!("Failed to execute python3 runtime: {{}}", err);
     std::process::exit(1);
 }}

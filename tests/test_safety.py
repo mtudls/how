@@ -555,6 +555,122 @@ class TestSafetyAndSandbox(unittest.TestCase):
             eh_mod.semantic_signature("to push new local repo to freshly created gh repo?"),
         )
 
+    def test_pre_idk_intermediate_steps_and_cross_platform_escalation(self):
+        """Intermediate steps before 'I don't know': Step 1 refines question; Step 2 escalates to smarter model."""
+        import io
+
+        # 1. Uncertainty detection and typo/shorthand query improvement
+        self.assertTrue(self.how.is_uncertain_response("I don't know"))
+        self.assertTrue(self.how.is_uncertain_response("<think>pondering</think>\nI don't know."))
+        self.assertFalse(self.how.is_uncertain_response("```bash\nln -s target link\n```"))
+
+        imp_q, notes = self.how.improve_query_locally("to maske symlik")
+        self.assertIn("symbolic link with ln -s", imp_q)
+        self.assertGreaterEqual(len(notes), 2)
+
+        imp_origin, _ = self.how.improve_query_locally("to see orign")
+        self.assertIn("git remote origin url", imp_origin)
+        self.assertIn("ln -s", self.how.get_domain_grounding_hint("how to create symlink"))
+
+        # Helper to build a fake SSE response for stream_groq_response
+        class FakeSSEResponse:
+            def __init__(self, content_str):
+                self.status = 200
+                chunk = json.dumps({"choices": [{"delta": {"content": content_str}}]})
+                self._lines = [
+                    f"data: {chunk}\n".encode("utf-8"),
+                    b"data: [DONE]\n",
+                ]
+
+            def __iter__(self):
+                return iter(self._lines)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return False
+
+        # Helper to build a fake JSON response for ask_deep_model
+        class FakeJSONResponse:
+            def __init__(self, payload_obj):
+                self.status = 200
+                self._bytes = json.dumps(payload_obj).encode("utf-8")
+
+            def read(self):
+                return self._bytes
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return False
+
+        # 2. Step 1 Recovery: Initial fast model returns "I don't know", refined question succeeds
+        step1_calls = []
+
+        def fake_urlopen_step1(req, timeout=30):
+            body = json.loads(req.data.decode("utf-8"))
+            step1_calls.append(body)
+            if len(step1_calls) == 1:
+                return FakeSSEResponse("I don't know")
+            return FakeSSEResponse("```bash\nln -s /path/to/target /path/to/link\n```")
+
+        buf1 = io.StringIO()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen_step1):
+            with patch.object(self.how, "get_api_key", return_value="gsk_fake_key"):
+                with patch.object(self.how, "require_api_key", return_value="gsk_fake_key"):
+                    with patch("sys.stdout", buf1):
+                        self.how.ask_groq("to maske symlink", verbosity="zero", no_cache=False)
+
+        self.assertEqual(len(step1_calls), 2, "Must retry once with refined question in Step 1")
+        self.assertIn("Domain Hint:", step1_calls[1]["messages"][1]["content"])
+        self.assertIn("ln -s /path/to/target /path/to/link", buf1.getvalue())
+        self.assertNotIn("I don't know", buf1.getvalue())
+
+        # 3. Step 2 Recovery: Initial + Step 1 return "I don't know", smarter model on external platform succeeds
+        step2_urls = []
+
+        def fake_urlopen_step2(req, timeout=30):
+            url = req.full_url
+            step2_urls.append(url)
+            if "generativelanguage.googleapis.com" in url:
+                return FakeJSONResponse({
+                    "candidates": [{"content": {"parts": [{"text": "```bash\ngit remote -v\n```"}]}}]
+                })
+            return FakeSSEResponse("I don't know")
+
+        buf2 = io.StringIO()
+        with patch.dict(os.environ, {"HOW_THINK_MODEL": "gemini:gemini-2.5-pro", "GEMINI_API_KEY": "gm_fake_key"}):
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen_step2):
+                with patch.object(self.how, "get_api_key", return_value="gsk_fake_key"):
+                    with patch.object(self.how, "require_api_key", return_value="gsk_fake_key"):
+                        with patch("sys.stdout", buf2):
+                            self.how.ask_groq("to see orign", verbosity="zero", no_cache=True)
+
+        self.assertEqual(len(step2_urls), 3, "Must run Initial -> Step 1 (Refined) -> Step 2 (Smarter Model)")
+        self.assertTrue(any("generativelanguage.googleapis.com" in u for u in step2_urls))
+        self.assertIn("git remote -v", buf2.getvalue())
+
+        # 4. Honest 'I don't know' preservation & non-caching when all steps are uncertain
+        def fake_urlopen_all_idk(req, timeout=30):
+            body = json.loads(req.data.decode("utf-8"))
+            if body.get("stream"):
+                return FakeSSEResponse("I don't know")
+            return FakeJSONResponse({"choices": [{"message": {"content": "I don't know"}}]})
+
+        buf3 = io.StringIO()
+        q_unknown = "to calibrate fictional hyperdrive in zorgos"
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen_all_idk):
+            with patch.object(self.how, "get_api_key", return_value="gsk_fake_key"):
+                with patch.object(self.how, "require_api_key", return_value="gsk_fake_key"):
+                    with patch("sys.stdout", buf3):
+                        self.how.ask_groq(q_unknown, verbosity="zero", no_cache=False)
+
+        self.assertEqual(buf3.getvalue().strip(), "I don't know")
+        cached_idk = self.how.get_cached_response(q_unknown, self.how.DEFAULT_MODEL, "zero", 3600)
+        self.assertIsNone(cached_idk, "Uncertain 'I don't know' responses must never poison the cache")
+
     def test_static_code_quality_and_bandit_invariants(self):
         """AST & static check across all repo Python files for syntax, single imports, and zero eval/exec."""
         import ast
