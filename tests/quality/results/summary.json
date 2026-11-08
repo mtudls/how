@@ -1,7 +1,17 @@
 {
-  "generated_at": "2026-11-06T17:20:55.437159+01:00",
+  "generated_at": "2026-11-08T23:06:00.900356+01:00",
   "n_queries": 100,
   "versions": [
+    {
+      "name": "0.5.0",
+      "ref": "v0.5.0",
+      "image": "how-v0.5.0",
+      "flags": [
+        "-0",
+        "--no-cache",
+        "--no-context"
+      ]
+    },
     {
       "name": "0.4.0",
       "ref": "v0.4.0",
@@ -33,6 +43,28 @@
     }
   ],
   "by_version": {
+    "0.5.0": {
+      "n": 100,
+      "with_command": 99,
+      "pct_with_command": 99.0,
+      "pct_syntax_ok": 98.0,
+      "pct_syntax_ok_of_cmds": 99.0,
+      "pct_idk": 1.0,
+      "pct_prose": 0.0,
+      "pct_how_error_timeout": 0.0,
+      "n_idk": 1,
+      "n_prose": 0,
+      "n_error_or_429": 0,
+      "median_s": 1.734,
+      "p95_s": 3.154,
+      "pct_exec_ok": 7.0,
+      "pct_exec_ok_of_executed": 26.9,
+      "pct_skipped": 74.0,
+      "pct_exec_fail": 19.0,
+      "n_exec": 26,
+      "n_skip": 74,
+      "n_exec_ok": 7
+    },
     "0.4.0": {
       "n": 100,
       "with_command": 52,
@@ -101,6 +133,21 @@
     }
   },
   "pairwise_identical_commands": {
+    "0.5.0_vs_0.4.0": {
+      "identical_pct": 41.2,
+      "n": 51,
+      "identical": 21
+    },
+    "0.5.0_vs_0.3.0": {
+      "identical_pct": 35.3,
+      "n": 51,
+      "identical": 18
+    },
+    "0.5.0_vs_0.1.1": {
+      "identical_pct": 33.3,
+      "n": 51,
+      "identical": 17
+    },
     "0.4.0_vs_0.3.0": {
       "identical_pct": 57.1,
       "n": 56,
@@ -118,7 +165,7 @@
     }
   },
   "groq_calls": {
-    "how": 300,
+    "how": 400,
     "retry": 0
   },
   "notes": [

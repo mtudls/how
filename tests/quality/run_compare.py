@@ -22,6 +22,7 @@ DOCKER_DIR = ROOT / "docker"
 
 # Evaluated versions (newest first)
 VERSIONS = [
+    {"name": "0.5.0", "ref": "v0.5.0", "image": "how-v0.5.0", "flags": ["-0", "--no-cache", "--no-context"]},
     {"name": "0.4.0", "ref": "v0.4.0", "image": "how-v0.4.0", "flags": ["-0", "--no-cache", "--no-context"]},
     {"name": "0.3.0", "ref": "dc766ab", "image": "how-v0.3.0", "flags": ["-0", "--no-cache", "--no-context"]},
     {"name": "0.1.1", "ref": "v0.1.1", "image": "how-v0.1.1", "flags": ["-0", "--no-cache"]},
@@ -431,15 +432,17 @@ def write_outputs(all_rows: list[dict], n_queries: int) -> None:
             by_ver[v["name"]] = summarize(v_rows)
 
     pairwise = {}
-    ids = sorted({r["id"] for r in all_rows})
     names = [v["name"] for v in VERSIONS if v["name"] in by_ver]
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
             a, b = names[i], names[j]
+            by_q_a = {r.get("query"): r for r in all_rows if r["version"] == a and r.get("query")}
+            by_q_b = {r.get("query"): r for r in all_rows if r["version"] == b and r.get("query")}
+            common_qs = sorted(set(by_q_a.keys()) & set(by_q_b.keys()))
             same = total = 0
-            for qid in ids:
-                ra = next((r for r in all_rows if r["version"] == a and r["id"] == qid), None)
-                rb = next((r for r in all_rows if r["version"] == b and r["id"] == qid), None)
+            for qtext in common_qs:
+                ra = by_q_a[qtext]
+                rb = by_q_b[qtext]
                 ca = ra.get("command") if (ra and ra.get("real_command")) else None
                 cb = rb.get("command") if (rb and rb.get("real_command")) else None
                 if ca or cb:
@@ -549,7 +552,7 @@ def main() -> None:
 
     done = set()
     all_rows: list[dict] = []
-    if progress_path.exists() and os.environ.get("HOW_QUALITY_RESUME") == "1":
+    if progress_path.exists() and os.environ.get("HOW_QUALITY_RESUME", "1") == "1":
         for line in progress_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue

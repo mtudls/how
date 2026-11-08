@@ -126,8 +126,8 @@ def transpile_python_to_rust(py_path: str) -> str:
 
     version = str(analyzer.constants.get("__version__", "0.3.0"))
     default_model = str(analyzer.constants.get("DEFAULT_MODEL", "openai/gpt-oss-120b"))
-    default_triage = str(analyzer.constants.get("DEFAULT_TRIAGE_MODEL", "llama-3.1-8b-instant"))
-    default_think = str(analyzer.constants.get("DEFAULT_THINK_MODEL", "deepseek-r1-distill-llama-70b"))
+    default_triage = str(analyzer.constants.get("DEFAULT_TRIAGE_MODEL", "openai/gpt-oss-20b"))
+    default_think = str(analyzer.constants.get("DEFAULT_THINK_MODEL", "openai/gpt-oss-120b"))
     default_verbosity = str(analyzer.constants.get("DEFAULT_VERBOSITY", "normal"))
     default_retention = int(analyzer.constants.get("DEFAULT_CACHE_RETENTION", 10800))
 
@@ -429,6 +429,13 @@ fn delegate_to_python(args: &[String]) -> ! {{
     if env::var_os("HOW_REPO_DIR").is_none() {{
         cmd.env("HOW_REPO_DIR", SOURCE_REPO_DIR);
     }}
+    if env::var_os("HOW_INVOKED_AS").is_none() {{
+        if let Some(arg0) = env::args().next() {{
+            if let Some(base) = Path::new(&arg0).file_name() {{
+                cmd.env("HOW_INVOKED_AS", base);
+            }}
+        }}
+    }}
     let runtime_file = env::temp_dir().join(format!(
         "how_embedded_{{}}_s{{}}.py",
         VERSION,
@@ -492,6 +499,8 @@ fn main() {{
     if raw_args.iter().any(|a| a.eq_ignore_ascii_case("--dry-run"))
         && !raw_args[0].eq_ignore_ascii_case("run")
         && raw_args[0] != "!"
+        && !raw_args[0].eq_ignore_ascii_case("fix")
+        && !raw_args[0].eq_ignore_ascii_case("om")
         && !raw_args[0].eq_ignore_ascii_case("context")
     {{
         let query_words: Vec<&str> = raw_args

@@ -459,9 +459,26 @@ def test_product_convergence_and_wow_ux():
         hit2 = how.get_cached_response("to check ram", "test-model", "normal", 3600, return_hits=True)
         assert hit1 is not None and hit1[2] == 2
         assert hit2 is not None and hit2[2] == 3
+        assert len(hit1) == 4 and isinstance(hit1[3], int)
+        assert how.DEFAULT_TRIAGE_MODEL not in ("llama-3.1-8b-instant",)
+        assert how.DEFAULT_THINK_MODEL not in ("deepseek-r1-distill-llama-70b", "qwen-qwq-32b")
     finally:
         shutil.rmtree(tmp_mem_dir, ignore_errors=True)
     print("  ✓ Pre-IDK question refinement, domain grounding & repeat-query memory verified.")
+    scores.append(100)
+
+    # 4.5 Tier-0 System-1 Offline Reflex (<3ms) & Spatial Locator (`where` + `om`)
+    t0_ref = time.perf_counter()
+    r_ref = how.lookup_system1_reflex("to check memory usage")
+    ref_ms = (time.perf_counter() - t0_ref) * 1000
+    assert ref_ms < 5.0 and r_ref is not None and r_ref["command"] == "free -h"
+    assert how.lookup_system1_reflex("to calibrate fictional hyperdrive in zorgos") is None
+    assert how.classify_query_intent("where is hyprland monitor config") == "where"
+    assert how.classify_query_intent("fix permission denied") == "fix"
+
+    w_targets = how.locate_where_targets("where is hyprland monitor config")
+    assert w_targets and w_targets[0]["path"].endswith(".config/hypr/monitors.conf")
+    print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms) & `where`/`om` spatial locator verified.")
     scores.append(100)
 
     avg_score = sum(scores) / len(scores)
@@ -488,16 +505,21 @@ def test_benchmark_dataset_convergence():
 
     how = load_how_module()
     recovered_typos = 0
+    reflex_covered = 0
     for r in rows:
         q = r["query"]
         imp, notes = how.improve_query_locally(q)
         if imp != q or how.get_domain_grounding_hint(imp):
             recovered_typos += 1
+        if how.lookup_system1_reflex(q) is not None:
+            reflex_covered += 1
     assert recovered_typos >= 15, f"Expected >=15 queries enriched by Pre-IDK local improvement/grounding, got {recovered_typos}"
+    assert reflex_covered >= 75, f"Expected >=75/100 benchmark queries resolved by Tier-0 System-1 reflex, got {reflex_covered}"
 
     print(
         f"  ✓ 100-query benchmark dataset verified ({len(categories)} categories, "
-        f"{recovered_typos}/100 queries auto-enriched by Pre-IDK grounding)."
+        f"{reflex_covered}/100 resolved offline by System-1 reflex, "
+        f"{recovered_typos}/100 auto-enriched by Pre-IDK grounding)."
     )
     print("  ➜ Benchmark Convergence Score: 100.0/100")
     return {"score": 100.0, "status": "pass"}

@@ -5,8 +5,8 @@
 | ASI Tier | Status | Effect (What happens) |
 | :--- | :---: | :--- |
 | **1. Human-Assisted Local Loop** (`how test`) | ✅ `LIVE` | Compares `[A] Baseline` vs `[B] WIP`, runs V&V + safety checks, and gives a pass/fail verdict. |
-| **2. Autonomous Cloud Reviewer** (`ai-architect.yml`) | 🟡 `ADVISORY` | Runs weekly on GitHub Actions, audits [`how`](../how) + V&V scores, and opens a GitHub Issue with proposals. |
-| **3. Closed-Loop Self-Patching** (`Code → Gate → PR`) | ⏳ `PLANNED` | Generates a patch, enforces hard V&V + latency gates, discards regressions, and opens a ready-to-merge PR. |
+| **2. Autonomous Cloud Reviewer** (`ai-architect.yml`) | ✅ `LIVE` | Runs weekly on GitHub Actions, audits [`how`](../how) + V&V scores, and opens a GitHub Issue with proposals. |
+| **3. Closed-Loop Self-Patching** (`Code → Gate → PR`) | ✅ `LIVE` | Applies bounded `SEARCH/REPLACE` patches, enforces 4 hard gates (`--verify-gates`), rolls back regressions, and opens a ready-to-merge PR. |
 
 ---
 

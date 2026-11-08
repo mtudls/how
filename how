@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [-t|--think|--fast] [--no-cache] [--no-context] [to] <query...> | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | test
-# omarchy:examples=how to ping google | how -0 to find largest files | how explain "tar -xzvf a.tgz" | how fix | how run
-# omarchy:aliases=howto
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | om | context | triage | status | model | auth | cache | history | feedback | test
+# omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | om where pacman config | how explain "tar -xzvf a.tgz" | how fix | how run
+# omarchy:aliases=howto,om
 """
 how - Fast, concise, direct CLI tool to learn "how to do sht in ..."
 Built for Omarchy, Linux, and modern developer stacks.
@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -28,8 +28,9 @@ GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_KEYS_URL = "https://console.groq.com/keys"
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
-DEFAULT_TRIAGE_MODEL = "llama-3.1-8b-instant"
-DEFAULT_THINK_MODEL = "deepseek-r1-distill-llama-70b"
+DEFAULT_TRIAGE_MODEL = "openai/gpt-oss-20b"
+DEFAULT_THINK_MODEL = "openai/gpt-oss-120b"
+REPEAT_MEMORY_WINDOW_SEC = 30 * 60
 DEFAULT_VERBOSITY = "normal"
 DEFAULT_CACHE_RETENTION = 3 * 3600
 
@@ -55,19 +56,26 @@ MAGENTA = "\033[35m" if USE_COLOR else ""
 
 def print_help():
     help_text = f"""Usage:
-  {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--yolo|--careful|--dry-run] <query...>
+  {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--offline|--reflex] [--yolo|--careful|--dry-run] <query...>
   {CYAN}how{RESET} <command> [args...]
+  {CYAN}om{RESET} [how|where|fix|explain|!|<query...>]
 
 Examples:
   {CYAN}how{RESET} to switch audio output in omarchy      {DIM}# Instant command + concise explanation{RESET}
   {CYAN}how -0{RESET} to find largest files in .          {DIM}# Command only (zero fluff, copy-ready){RESET}
+  {CYAN}how where{RESET} hyprland monitor config          {DIM}# Locate files, configs, logs, binaries & ports{RESET}
+  {CYAN}how --offline{RESET} to check memory usage        {DIM}# Tier-0 System-1 reflex (<3ms, zero network){RESET}
+  {CYAN}om !{RESET}                                       {DIM}# Preview or run last suggested command{RESET}
   {CYAN}how -t{RESET} to fix limine secure boot           {DIM}# Deep reasoning mode for troubleshooting{RESET}
   {CYAN}how --yolo{RESET} to run single test file         {DIM}# Auto-read OS/stack & print what was read{RESET}
 
 Commands:
+  {CYAN}where{RESET} <query...>                        Offline <5ms spatial locator for configs, logs, files & ports
+  {CYAN}reflex{RESET} <query...>                       Offline <3ms System-1 reflex engine (zero network calls)
   {CYAN}explain{RESET} [command...]                   Offline <1ms visual pipeline & flag anatomy + safety badge
   {CYAN}fix{RESET} [error...]                         Diagnose & repair the last command (offline rules + AI fallback)
   {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command with safety check
+  {CYAN}om{RESET} [how|where|fix|explain|!|<query>]   Unified CLI router for procedural, spatial & repair tasks
   {CYAN}context{RESET} [careful|yolo|dry-run|on|off]  Graduated OS & stack discovery (default: careful)
   {CYAN}triage{RESET} [on|off|<query...>]             Groq question triage & deep-thinking routing
   {CYAN}status{RESET}                                 Unified dashboard (auth, models, context, cache, engine)
@@ -85,6 +93,8 @@ Options:
   {GREEN}--low{RESET}                                  Minimal 1-sentence explanation
   {GREEN}-t, --think, --deep{RESET}                    Force slower, deeper reasoning model
   {GREEN}--fast{RESET}                                 Force instant Groq execution (bypass triage)
+  {GREEN}--offline{RESET}                              Force Tier-0 System-1 offline reflex (<3ms, no network)
+  {GREEN}--reflex{RESET}                               Check Tier-0 System-1 reflex first before cloud LPU
   {GREEN}--careful{RESET}                              Step-by-step user-approved context discovery with dry-run
   {GREEN}--yolo{RESET}                                 Auto-read OS, stack & docs and state what was read
   {GREEN}--dry-run{RESET}                              Show dry-run context & doc commands without executing
@@ -1047,18 +1057,20 @@ def resolve_deep_provider(cfg=None) -> tuple[str, str, str]:
     Resolves the best available Deep Thinking provider and model:
     Returns (provider, model_name, api_key_or_cmd).
     Priority:
-    1. Explicit `think_model` in config or `HOW_THINK_MODEL` env var (e.g. `gemini:gemini-2.5-pro`, `anthropic:claude-3-7-sonnet-latest`, `openai:o3-mini`, `groq:deepseek-r1-distill-llama-70b`, `cli:claude`).
+    1. Explicit `think_model` in config or `HOW_THINK_MODEL` env var (e.g. `gemini:gemini-2.5-pro`, `anthropic:claude-3-7-sonnet-latest`, `openai:o3-mini`, `groq:openai/gpt-oss-120b`, `cli:claude`).
     2. External reasoning API keys if present in environment (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`).
-    3. Default Groq reasoning model (`deepseek-r1-distill-llama-70b` / `qwen-qwq-32b` / `openai/gpt-oss-120b`).
+    3. Default Groq reasoning model (`openai/gpt-oss-120b` / `openai/gpt-oss-20b` / `qwen/qwen3.8-27b`).
     """
     if cfg is None:
         cfg = load_config()
 
     key_map = {
+        "cerebras": ("CEREBRAS_API_KEY", "cerebras_api_key", "llama-3.3-70b"),
         "gemini": ("GEMINI_API_KEY", "gemini_api_key", "gemini-2.5-flash"),
         "anthropic": ("ANTHROPIC_API_KEY", "anthropic_api_key", "claude-3-7-sonnet-latest"),
         "openai": ("OPENAI_API_KEY", "openai_api_key", "o3-mini"),
         "openrouter": ("OPENROUTER_API_KEY", "openrouter_api_key", "deepseek/deepseek-r1"),
+        "github": ("GITHUB_TOKEN", "github_token", "gpt-4o-mini"),
     }
 
     configured = os.environ.get("HOW_THINK_MODEL") or cfg.get("think_model") or ""
@@ -1153,8 +1165,14 @@ def ask_deep_model(
         except Exception:
             pass
 
-    if provider in ("openai", "openrouter") and credential:
-        url = "https://api.openai.com/v1/chat/completions" if provider == "openai" else "https://openrouter.ai/api/v1/chat/completions"
+    if provider in ("openai", "openrouter", "cerebras", "github") and credential:
+        url_map = {
+            "openai": "https://api.openai.com/v1/chat/completions",
+            "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+            "cerebras": "https://api.cerebras.ai/v1/chat/completions",
+            "github": "https://models.inference.ai.azure.com/chat/completions",
+        }
+        url = url_map[provider]
         try:
             data = _post_json(
                 url,
@@ -1195,7 +1213,7 @@ def ask_deep_model(
     deep_pool = []
     if provider == "groq" and model_name and model_name not in excluded:
         deep_pool.append(model_name)
-    for m in (DEFAULT_THINK_MODEL, "qwen-qwq-32b", "llama-3.3-70b-versatile", "openai/gpt-oss-120b"):
+    for m in (DEFAULT_THINK_MODEL, "openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
         if m not in deep_pool and m not in excluded:
             deep_pool.append(m)
     if not deep_pool and provider == "groq" and model_name:
@@ -1228,6 +1246,220 @@ def ask_deep_model(
     if last_uncertain[0]:
         return _finish(last_uncertain[0], last_uncertain[1])
     return "", "none"
+
+
+def _read_gh_hosts_oauth_token() -> str:
+    """Fast <0.2ms read-only probe of ~/.config/gh/hosts.yml for an active GitHub CLI oauth_token."""
+    import re
+    gh_hosts = os.path.expanduser("~/.config/gh/hosts.yml")
+    if not os.path.isfile(gh_hosts):
+        return ""
+    try:
+        with open(gh_hosts, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read(8192)
+        m = re.search(r"oauth_token:\s*([^\s#\"']+)", text)
+        if m:
+            return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def discover_zero_setup_provider(cfg: dict = None, include_groq: bool = False, allow_gh_cli: bool = True) -> dict | None:
+    """
+    Golden Alternative (GA) Zero-Setup Cloud Auto-Discovery:
+    Probes existing environment and CLI credentials already present on the developer's machine
+    so `how` works out-of-the-box with zero manual API key setup.
+    Returns `{"provider", "model", "credential", "source", "label"}` or `None`.
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    if include_groq:
+        g_key = get_api_key()
+        if g_key:
+            mod = cfg.get("model", DEFAULT_MODEL)
+            return {
+                "provider": "groq",
+                "model": mod,
+                "credential": g_key,
+                "source": "GROQ_API_KEY" if os.environ.get("GROQ_API_KEY") else "config.json",
+                "label": f"groq:{mod}",
+            }
+
+    cerebras_k = (os.environ.get("CEREBRAS_API_KEY") or cfg.get("cerebras_api_key") or "").strip()
+    if cerebras_k:
+        mod = cfg.get("cerebras_model", "llama-3.3-70b")
+        return {
+            "provider": "cerebras",
+            "model": mod,
+            "credential": cerebras_k,
+            "source": "CEREBRAS_API_KEY",
+            "label": f"cerebras:{mod}",
+        }
+
+    gemini_k = (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or cfg.get("gemini_api_key")
+        or ""
+    ).strip()
+    if gemini_k:
+        mod = cfg.get("gemini_model", "gemini-2.5-flash-lite")
+        return {
+            "provider": "gemini",
+            "model": mod,
+            "credential": gemini_k,
+            "source": "GEMINI_API_KEY",
+            "label": f"gemini:{mod}",
+        }
+
+    gh_tok = (
+        os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or cfg.get("github_token")
+        or ""
+    ).strip()
+    if gh_tok:
+        mod = cfg.get("github_model", "gpt-4o-mini")
+        return {
+            "provider": "github",
+            "model": mod,
+            "credential": gh_tok,
+            "source": "GITHUB_TOKEN",
+            "label": f"github:{mod}",
+        }
+
+    if allow_gh_cli and os.environ.get("HOW_NO_GH_AUTO") not in ("1", "true", "yes"):
+        hosts_tok = _read_gh_hosts_oauth_token()
+        if hosts_tok:
+            mod = cfg.get("github_model", "gpt-4o-mini")
+            return {
+                "provider": "github",
+                "model": mod,
+                "credential": hosts_tok,
+                "source": "gh:hosts.yml",
+                "label": f"github:{mod}",
+            }
+        import shutil
+        import subprocess
+        if shutil.which("gh"):
+            try:
+                proc = subprocess.run(
+                    ["gh", "auth", "token"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=1.5,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    mod = cfg.get("github_model", "gpt-4o-mini")
+                    return {
+                        "provider": "github",
+                        "model": mod,
+                        "credential": proc.stdout.strip(),
+                        "source": "gh auth token",
+                        "label": f"github:{mod}",
+                    }
+            except Exception:
+                pass
+
+    for prov, env_k, cfg_k, def_mod in (
+        ("openrouter", "OPENROUTER_API_KEY", "openrouter_api_key", "qwen/qwen3-32b:free"),
+        ("openai", "OPENAI_API_KEY", "openai_api_key", "gpt-4o-mini"),
+        ("anthropic", "ANTHROPIC_API_KEY", "anthropic_api_key", "claude-3-7-sonnet-latest"),
+    ):
+        val = (os.environ.get(env_k) or cfg.get(cfg_k) or "").strip()
+        if val:
+            return {
+                "provider": prov,
+                "model": def_mod,
+                "credential": val,
+                "source": env_k,
+                "label": f"{prov}:{def_mod}",
+            }
+
+    return None
+
+
+def query_zero_setup_provider(
+    provider_info: dict,
+    sys_prompt: str,
+    user_prompt: str,
+    enable_search: bool = False,
+    timeout: int = 25,
+) -> str:
+    """
+    Executes a CLI query against a discovered Zero-Setup provider
+    (Cerebras WSE, Gemini Flash-Lite + Search Grounding, GitHub Models via `gh` token, OpenRouter, OpenAI, or Anthropic).
+    Returns cleaned response text or empty string on error.
+    """
+    import json
+    import urllib.request
+
+    if not provider_info:
+        return ""
+    prov = provider_info.get("provider", "")
+    model = provider_info.get("model", "")
+    cred = provider_info.get("credential", "")
+    if not (prov and model and cred):
+        return ""
+
+    def _post(url, payload, extra_headers):
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**COMMON_HEADERS, "Content-Type": "application/json", **extra_headers},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        if prov == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={cred}"
+            body = {
+                "contents": [{"role": "user", "parts": [{"text": f"{sys_prompt}\n\nUser request:\n{user_prompt}"}]}],
+                "generationConfig": {"temperature": 0.1},
+            }
+            if enable_search:
+                body["tools"] = [{"google_search": {}}]
+            data = _post(url, body, {})
+            parts = data["candidates"][0]["content"].get("parts", [])
+            txt = "\n".join(p.get("text", "") for p in parts if p.get("text"))
+            return strip_think_blocks(strip_control_sequences(txt)).strip()
+
+        if prov == "anthropic":
+            data = _post(
+                "https://api.anthropic.com/v1/messages",
+                {"model": model, "max_tokens": 512, "system": sys_prompt, "messages": [{"role": "user", "content": user_prompt}]},
+                {"x-api-key": cred, "anthropic-version": "2023-06-01"},
+            )
+            texts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+            return strip_think_blocks(strip_control_sequences("\n".join(texts))).strip()
+
+        url_map = {
+            "groq": GROQ_API_URL,
+            "cerebras": "https://api.cerebras.ai/v1/chat/completions",
+            "github": "https://models.inference.ai.azure.com/chat/completions",
+            "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+            "openai": "https://api.openai.com/v1/chat/completions",
+        }
+        if prov in url_map:
+            data = _post(
+                url_map[prov],
+                {
+                    "model": model,
+                    "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
+                    "temperature": 0.1,
+                },
+                {"Authorization": f"Bearer {cred}"},
+            )
+            txt = data["choices"][0]["message"].get("content", "")
+            return strip_think_blocks(strip_control_sequences(txt)).strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def manage_triage_command(args):
@@ -1781,11 +2013,16 @@ def get_db_connection():
                 response TEXT,
                 created_at REAL,
                 expires_at REAL,
-                hit_count INTEGER DEFAULT 1
+                hit_count INTEGER DEFAULT 1,
+                last_hit_at REAL
             )
         """)
         try:
             conn.execute("ALTER TABLE response_cache ADD COLUMN hit_count INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE response_cache ADD COLUMN last_hit_at REAL")
         except Exception:
             pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_expires_at ON response_cache(expires_at)")
@@ -1836,7 +2073,11 @@ def compute_cache_key(query, model, verbosity, prompt_hash="", docs_hash=""):
 
 
 def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash="", docs_hash="", return_hits=False):
-    """Returns (response_text, created_at) (or 3-tuple with hit_count if return_hits=True) on valid cache hit."""
+    """Returns (response_text, created_at) on valid cache hit.
+
+    With return_hits=True returns
+    (response_text, created_at, hit_count, seconds_since_previous_hit).
+    """
     if retention_seconds <= 0:
         return None
     import time
@@ -1847,21 +2088,24 @@ def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash=
             conn.execute("DELETE FROM response_cache WHERE expires_at < ?", (now,))
             cur = conn.cursor()
             cur.execute(
-                "SELECT response, created_at, expires_at, COALESCE(hit_count, 1) FROM response_cache WHERE key = ?",
+                "SELECT response, created_at, expires_at, COALESCE(hit_count, 1), last_hit_at "
+                "FROM response_cache WHERE key = ?",
                 (cache_key,),
             )
             row = cur.fetchone()
             if row:
-                resp, created_at, expires_at, hits = row
+                resp, created_at, expires_at, hits, last_hit_at = row
                 if now < expires_at:
+                    prev_touch = float(last_hit_at or created_at or now)
+                    seconds_since_prev = max(0, int(now - prev_touch))
                     new_expires_at = now + retention_seconds
                     new_hits = int(hits or 1) + 1
                     conn.execute(
-                        "UPDATE response_cache SET expires_at = ?, hit_count = ? WHERE key = ?",
-                        (new_expires_at, new_hits, cache_key),
+                        "UPDATE response_cache SET expires_at = ?, hit_count = ?, last_hit_at = ? WHERE key = ?",
+                        (new_expires_at, new_hits, now, cache_key),
                     )
                     if return_hits:
-                        return resp, created_at, new_hits
+                        return resp, created_at, new_hits, seconds_since_prev
                     return resp, created_at
     except Exception:
         pass
@@ -1879,9 +2123,10 @@ def save_cached_response(query, model, verbosity, response_text, retention_secon
         expires_at = now + retention_seconds
         with db_session() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO response_cache (key, query, model, verbosity, response, created_at, expires_at, hit_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-            """, (cache_key, query, model, verbosity, response_text, now, expires_at))
+                INSERT OR REPLACE INTO response_cache
+                    (key, query, model, verbosity, response, created_at, expires_at, hit_count, last_hit_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """, (cache_key, query, model, verbosity, response_text, now, expires_at, now))
     except Exception:
         pass
 
@@ -3156,7 +3401,1839 @@ def stream_groq_response(req, verbosity="normal", defer_uncertain=True):
 
 
 # -----------------------------------------------------------------------------
-# Main Query Execution (Cache -> Triage -> Fast Groq / Pre-IDK Escalation / Deep Thinking)
+# Repeat-Question Memory helpers
+# -----------------------------------------------------------------------------
+
+def format_relative_age(seconds: int) -> str:
+    """Formats a short human age string (e.g. 2m, 15m, 1h) for repeat-memory prompts."""
+    sec = max(0, int(seconds or 0))
+    if sec < 60:
+        return "just now" if sec < 5 else f"{sec}s ago"
+    if sec < 3600:
+        return f"{sec // 60}m ago"
+    if sec < 86400:
+        hours = sec // 3600
+        mins = (sec % 3600) // 60
+        return f"{hours}h ago" if mins == 0 else f"{hours}h{mins}m ago"
+    days = sec // 86400
+    return f"{days}D ago"
+
+
+def prompt_repeat_question_memory(raw_query: str, hit_count: int, seconds_since_prev: int, input_fn=None) -> str:
+    """
+    Interactive Repeat-Question Memory (requirements Prompt 30 / roadmap v0.5).
+    When the same query is asked again within REPEAT_MEMORY_WINDOW_SEC in a TTY,
+    ask whether the previous cached answer failed.
+
+    Returns one of: 'n' (show cache), 'y' (fresh deep thinking), 'e' (how fix).
+    Non-interactive / disabled environments always return 'n'.
+    """
+    if os.environ.get("HOW_NO_REPEAT_PROMPT") in ("1", "true", "yes"):
+        return "n"
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return "n"
+    if seconds_since_prev > REPEAT_MEMORY_WINDOW_SEC:
+        return "n"
+
+    ask_fn = input_fn or input
+    age = format_relative_age(seconds_since_prev)
+    times = f"{hit_count}x" if hit_count >= 2 else "before"
+    print(f"  {YELLOW}?{RESET} You asked this {BOLD}{age}{RESET} ({times}). Did the previous command not work?")
+    print(f"    {CYAN}[Y]{RESET} Try a fresh Deep Thinking solution (-t --no-cache)")
+    print(f"    {CYAN}[e]{RESET} Attach last terminal error / exit code and fix it ({CYAN}how fix{RESET})")
+    print(f"    {CYAN}[n]{RESET} Show the cached command again")
+    try:
+        ans = ask_fn(f"  {CYAN}Choice [Y/e/n]:{RESET} ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return "n"
+    if ans in ("y", "yes"):
+        return "y"
+    if ans in ("e", "fix", "error"):
+        return "e"
+    return "n"
+
+
+# -----------------------------------------------------------------------------
+# Tier-0 System-1 Offline Reflex Engine (<3ms `basal` / `jev` local reflex)
+# & Spatial Locator (`where`) + Unified `om` CLI Router
+# -----------------------------------------------------------------------------
+
+def classify_query_intent(query: str) -> str:
+    """
+    Classifies a natural-language query into one of:
+    - 'where': spatial location of files, configs, logs, binaries, systemd units, or ports
+    - 'fix': diagnostic or repair request for a failed command or error symptom
+    - 'explain': request to dissect or explain a shell command or pipeline
+    - 'how': procedural 'how to do X' command synthesis
+    """
+    import re
+    q = (query or "").strip()
+    if not q:
+        return "how"
+    q_low = q.lower()
+
+    if q_low.startswith(("explain ", "dissect ", "anatomy ")) or re.match(
+        r"^what\s+does\s+[a-z0-9_\-\./]+\s+-", q_low
+    ):
+        return "explain"
+
+    if q_low in ("fix", "repair", "diagnose") or q_low.startswith(("fix ", "repair ", "diagnose ")):
+        return "fix"
+    if any(
+        err_k in q_low
+        for err_k in (
+            "permission denied",
+            "db.lck",
+            "unable to lock database",
+            "has no upstream branch",
+            "address already in use",
+            "command not found",
+        )
+    ) and not q_low.startswith(("how ", "to ")):
+        return "fix"
+
+    if q_low.startswith(("where ", "where's ", "locate ", "path to ", "location of ")):
+        return "where"
+    if re.search(
+        r"\b(?:where\s+is|where\s+are|config\s+path|config\s+location|file\s+location|which\s+file\s+is)\b",
+        q_low,
+    ) and not q_low.startswith(("how to ", "how do i ")):
+        return "where"
+
+    return "how"
+
+
+SYSTEM1_REFLEX_KB = (
+    # --- Git & GitHub CLI ---
+    (
+        "git_remote_origin",
+        ("git origin", "see origin", "check origin", "remote url", "remote origin"),
+        ("git", "origin", "remote", "url", "see", "check"),
+        "git remote -v",
+        "Lists configured Git remote names and their fetch/push URLs.",
+        "git",
+    ),
+    (
+        "git_set_origin",
+        ("set origin", "change origin", "remote set-url"),
+        ("git", "set", "origin", "remote", "url"),
+        "git remote set-url origin <repo-url>",
+        "Updates the remote origin URL (use `git remote add origin <repo-url>` if none exists yet).",
+        "git",
+    ),
+    (
+        "git_remove_origin",
+        ("remove origin", "delete origin", "remote remove"),
+        ("git", "remove", "delete", "origin", "remote"),
+        "git remote remove origin",
+        "Removes the `origin` remote from the current Git repository.",
+        "git",
+    ),
+    (
+        "git_init",
+        ("init git", "git init", "initialize git"),
+        ("git", "init", "initialize", "repo", "repository"),
+        "git init",
+        "Initializes a new empty Git repository in the current directory.",
+        "git",
+    ),
+    (
+        "gh_private_repo",
+        ("private repo", "create private repo", "gh repo create"),
+        ("private", "repo", "repository", "gh", "github", "create"),
+        "gh repo create <name> --private --source=. --remote=origin",
+        "Creates a new private GitHub repository from the current directory and sets `origin`.",
+        "git",
+    ),
+    (
+        "gh_push_fresh",
+        ("push to freshly created", "push local repo", "origin is not set"),
+        ("push", "fresh", "freshly", "created", "gh", "repo", "origin"),
+        "git branch -M main && git remote add origin https://github.com/<owner>/<repo>.git && git push -u origin main",
+        "Links the local repository to a freshly created GitHub remote and pushes `main`.",
+        "git",
+    ),
+    (
+        "git_commit_name",
+        ("name a commit", "commit message", "git commit"),
+        ("name", "commit", "message", "git"),
+        'git commit -m "<message>"',
+        "Records staged changes to the repository with a descriptive commit message.",
+        "git",
+    ),
+    (
+        "gh_delete_repo",
+        ("delete repo with gh", "gh repo delete"),
+        ("delete", "repo", "repository", "gh"),
+        "gh repo delete <owner>/<repo> --yes",
+        "Permanently deletes a GitHub repository via GitHub CLI.",
+        "git",
+    ),
+    (
+        "gh_delete_rights",
+        ("delete rights with gh", "delete_repo", "gh auth refresh"),
+        ("gain", "delete", "rights", "scope", "gh", "auth"),
+        "gh auth refresh -h github.com -s delete_repo",
+        "Requests the `delete_repo` OAuth scope for your active GitHub CLI session.",
+        "git",
+    ),
+    (
+        "git_squash_commits",
+        ("squash last", "squash commits", "interactive rebase"),
+        ("squash", "last", "commits", "git", "rebase", "interactively"),
+        "git rebase -i HEAD~3",
+        "Opens an interactive rebase for the last 3 commits so you can `squash` (`s`) them.",
+        "git",
+    ),
+    (
+        "git_undo_commit",
+        ("undo last git commit", "undo commit keeping changes", "reset --soft"),
+        ("undo", "last", "git", "commit", "keeping", "changes"),
+        "git reset --soft HEAD~1",
+        "Undoes the last commit while keeping all modified files staged in your index.",
+        "git",
+    ),
+    (
+        "git_stash_untracked",
+        ("stash untracked", "git stash -u"),
+        ("stash", "untracked", "files", "git"),
+        "git stash push -u",
+        "Stashes both tracked modifications and untracked files.",
+        "git",
+    ),
+    (
+        "git_compare_branches",
+        ("compare two branches", "diff branches", "git diff"),
+        ("compare", "two", "branches", "git", "diff"),
+        "git diff <branch1>..<branch2>",
+        "Shows the diff between two Git branches.",
+        "git",
+    ),
+    (
+        "git_pull_rebase",
+        ("git pull to rebase", "pull.rebase", "rebase by default"),
+        ("set", "git", "pull", "rebase", "default"),
+        "git config --global pull.rebase true",
+        "Configures Git to rebase instead of merge on `git pull` by default.",
+        "git",
+    ),
+    (
+        "gh_auth_switch",
+        ("switch github", "gh auth switch", "active account"),
+        ("switch", "github", "gh", "account", "active"),
+        "gh auth switch",
+        "Switches the active GitHub CLI account without logging out.",
+        "git",
+    ),
+    # --- Omarchy & Hyprland ---
+    (
+        "omarchy_version",
+        ("omarchy version", "version is quattro"),
+        ("omarchy", "version", "quattro", "check"),
+        "omarchy version || cat /etc/omarchy-release",
+        "Displays the installed Omarchy release version.",
+        "omarchy",
+    ),
+    (
+        "omarchy_theme",
+        ("omarchy theme", "change theme", "switch theme", "colorscheme"),
+        ("omarchy", "theme", "change", "switch", "wallpaper"),
+        "omarchy theme set <theme-name>",
+        "Switches the active Omarchy desktop theme (use `omarchy theme list` to view available themes).",
+        "omarchy",
+    ),
+    (
+        "omarchy_font",
+        ("switch font", "omarchy font", "change font"),
+        ("omarchy", "font", "switch", "change", "set"),
+        "omarchy font set <font-name>",
+        "Changes the system terminal and UI font in Omarchy (use `omarchy font list` to browse).",
+        "omarchy",
+    ),
+    (
+        "omarchy_commands",
+        ("omarchy cli commands", "available omarchy", "omarchy commands"),
+        ("list", "available", "omarchy", "commands", "all"),
+        "omarchy commands --all",
+        "Lists all available Omarchy CLI commands and utilities.",
+        "omarchy",
+    ),
+    (
+        "omarchy_audio",
+        ("switch audio", "audio output", "pactl", "wpctl", "sound output"),
+        ("switch", "audio", "output", "sink", "pactl", "wpctl", "sound", "speaker"),
+        "omarchy-audio-output-switch || wpctl set-default <sink-id>",
+        "Switches the active PipeWire/PulseAudio output sink.",
+        "media",
+    ),
+    (
+        "omarchy_mute_mic",
+        ("mute microphone", "mute mic", "wpctl set-mute"),
+        ("mute", "microphone", "mic", "audio", "source"),
+        "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+        "Toggles mute on the default PipeWire microphone input source.",
+        "media",
+    ),
+    (
+        "omarchy_screenrecord",
+        ("record screen", "screenrecording", "screen recording"),
+        ("record", "screen", "region", "omarchy", "screenrecording"),
+        "omarchy capture screenrecording",
+        "Starts or stops an Omarchy screen recording of a selected region.",
+        "omarchy",
+    ),
+    (
+        "omarchy_qr",
+        ("scan a qr", "qr code", "capture qr"),
+        ("scan", "qr", "code", "screen", "omarchy"),
+        "omarchy capture qr",
+        "Scans a QR code from a selected screen region and copies the result to the clipboard.",
+        "omarchy",
+    ),
+    (
+        "omarchy_default_browser",
+        ("default browser", "set default browser", "web browser"),
+        ("set", "default", "browser", "web", "omarchy", "xdg-settings"),
+        "xdg-settings set default-web-browser <browser>.desktop",
+        "Sets the default web browser via XDG desktop settings (e.g. `chromium.desktop` or `firefox.desktop`).",
+        "omarchy",
+    ),
+    (
+        "omarchy_limine_sbctl",
+        ("enroll limine", "limine secure boot", "sbctl"),
+        ("enroll", "limine", "config", "sbctl", "secure", "boot"),
+        "sudo limine enroll-config && sudo sbctl sign-all",
+        "Enrolls the Limine bootloader configuration hash and signs EFI binaries for Secure Boot.",
+        "omarchy",
+    ),
+    (
+        "omarchy_faillock",
+        ("faillock", "password lockout", "reset faillock"),
+        ("reset", "faillock", "password", "lockout", "user"),
+        "faillock --reset --user $USER",
+        "Resets PAM password lockout records for the current user.",
+        "omarchy",
+    ),
+    (
+        "omarchy_claude_code",
+        ("run claude code", "claude code in terminal"),
+        ("run", "claude", "code", "terminal"),
+        "claude",
+        "Launches the Claude Code interactive CLI agent in the current directory.",
+        "omarchy",
+    ),
+    (
+        "hypr_list_windows",
+        ("open hyprland windows", "list hyprland windows", "hyprctl clients"),
+        ("list", "open", "hyprland", "windows", "clients"),
+        "hyprctl clients",
+        "Lists all open Hyprland windows with their class, title, workspace, and PID.",
+        "hyprland",
+    ),
+    (
+        "hypr_reload",
+        ("reload hyprland", "hyprctl reload"),
+        ("reload", "hyprland", "config", "without", "logout"),
+        "hyprctl reload",
+        "Reloads the Hyprland configuration live without logging out (`Super + Shift + C`).",
+        "hyprland",
+    ),
+    (
+        "hypr_configerrors",
+        ("hyprland config syntax", "configerrors", "syntax errors"),
+        ("check", "hyprland", "config", "syntax", "errors"),
+        "hyprctl configerrors",
+        "Checks the active Hyprland configuration for syntax or parse errors.",
+        "hyprland",
+    ),
+    (
+        "hypr_keybindings",
+        ("keybindings in managing windows", "hyprland keybindings", "hyprctl binds"),
+        ("change", "keybindings", "bindings", "windows", "hyprland", "shortcuts"),
+        "${EDITOR:-nvim} ~/.config/hypr/bindings.conf",
+        "Opens your user Hyprland keybindings configuration file for editing.",
+        "hyprland",
+    ),
+    (
+        "hypr_screenshot_window",
+        ("screenshot of active window", "screenshot in wayland", "take a screenshot"),
+        ("take", "screenshot", "active", "window", "wayland", "grim", "omarchy"),
+        "omarchy capture screenshot",
+        "Captures a screenshot in Omarchy/Wayland (or use `grim -g \"$(slurp)\" screenshot.png`).",
+        "hyprland",
+    ),
+    (
+        "hypr_mirror_displays",
+        ("mirror displays", "mirror monitor", "mirror screen"),
+        ("mirror", "displays", "monitors", "hyprland"),
+        "hyprctl keyword monitor <HDMI-A-1>,preferred,auto,1,mirror,<eDP-1>",
+        "Mirrors an external display to the primary monitor in Hyprland.",
+        "hyprland",
+    ),
+    (
+        "hypr_floating_terminal",
+        ("floating terminal", "open a floating"),
+        ("open", "floating", "terminal", "hyprland"),
+        "hyprctl dispatch exec \"[float; size 75% 75%; center] ${TERMINAL:-alacritty}\"",
+        "Spawns a centered floating terminal window in Hyprland.",
+        "hyprland",
+    ),
+    (
+        "hypr_move_workspace",
+        ("move window to workspace", "movetoworkspace"),
+        ("move", "window", "workspace", "hyprland"),
+        "hyprctl dispatch movetoworkspace 3",
+        "Moves the focused window to workspace 3 in Hyprland.",
+        "hyprland",
+    ),
+    (
+        "hypr_fullscreen",
+        ("toggle fullscreen", "fullscreen in hyprland"),
+        ("toggle", "fullscreen", "hyprland"),
+        "hyprctl dispatch fullscreen 0",
+        "Toggles fullscreen mode for the currently focused Hyprland window.",
+        "hyprland",
+    ),
+    # --- Packages (Arch / Pacman / AUR) ---
+    (
+        "pkg_update_all",
+        ("update all packages", "pacman -syu", "upgrade packages", "update system"),
+        ("update", "upgrade", "all", "packages", "pacman", "system"),
+        "sudo pacman -Syu",
+        "Synchronizes package databases and upgrades all installed Arch Linux packages.",
+        "packages",
+    ),
+    (
+        "pkg_uninstall",
+        ("uninstall spotify", "uninstall package", "remove package"),
+        ("uninstall", "remove", "spotify", "package", "pacman"),
+        "sudo pacman -Rns spotify-launcher",
+        "Uninstalls the package along with its unneeded dependencies and config files.",
+        "packages",
+    ),
+    (
+        "pkg_install_vlc",
+        ("install vlc",),
+        ("install", "vlc", "pacman"),
+        "sudo pacman -S vlc",
+        "Installs the VLC media player from official Arch repositories.",
+        "packages",
+    ),
+    (
+        "pkg_install_cloudflare",
+        ("cloudflare cli", "cloudflared", "wrangler"),
+        ("install", "cloudflare", "cli", "cloudflared"),
+        "sudo pacman -S cloudflared",
+        "Installs the official Cloudflare CLI daemon (`cloudflared`) via pacman.",
+        "packages",
+    ),
+    (
+        "pkg_install_jetbrains",
+        ("jetbrains toolbox",),
+        ("install", "jetbrains", "toolbox", "yay"),
+        "yay -S --noconfirm jetbrains-toolbox",
+        "Installs JetBrains Toolbox from the Arch User Repository (AUR).",
+        "packages",
+    ),
+    (
+        "pkg_install_paru",
+        ("install paru", "paru aur"),
+        ("install", "paru", "aur", "helper"),
+        "sudo pacman -S --needed base-devel git && git clone https://aur.archlinux.org/paru.git /tmp/paru && (cd /tmp/paru && makepkg -si)",
+        "Builds and installs the `paru` AUR helper from source.",
+        "packages",
+    ),
+    (
+        "pkg_clean_cache",
+        ("clean pacman cache", "pacman -sc", "paccache"),
+        ("clean", "clear", "pacman", "cache"),
+        "sudo pacman -Sc",
+        "Removes old uninstalled package tarballs from `/var/cache/pacman/pkg/`.",
+        "packages",
+    ),
+    (
+        "pkg_owns_file",
+        ("package owns a file", "pacman -qo", "which package owns"),
+        ("find", "which", "package", "owns", "file", "pacman"),
+        "pacman -Qo /path/to/file",
+        "Queries the Pacman database to show which installed package owns a file.",
+        "system",
+    ),
+    (
+        "pkg_list_orphans",
+        ("list orphan packages", "pacman -qtdq", "orphan packages in pacman"),
+        ("list", "orphan", "orphans", "packages", "pacman"),
+        "pacman -Qtdq",
+        "Lists orphaned packages that were installed as dependencies and are no longer required.",
+        "packages",
+    ),
+    (
+        "pkg_remove_orphans",
+        ("remove orphan packages", "delete orphan packages"),
+        ("remove", "delete", "orphan", "packages", "arch", "pacman"),
+        "sudo pacman -Rns $(pacman -Qtdq)",
+        "Removes all orphaned packages and their configuration files in Arch Linux.",
+        "system",
+    ),
+    # --- Files, Disk & Archives ---
+    (
+        "files_symlink",
+        ("shortcut to directory", "create symlink", "symbolic link", "ln -s"),
+        ("create", "shortcut", "symlink", "symbolic", "link", "directory"),
+        "ln -s /path/to/target /path/to/link",
+        "Creates a symbolic link pointing to the target file or directory.",
+        "files",
+    ),
+    (
+        "files_alias",
+        ("create alias", "bash alias", "shell alias"),
+        ("create", "alias", "shell", "bashrc"),
+        "alias ll='ls -la'",
+        "Defines a shell command alias (append to `~/.bashrc` or `~/.zshrc` to persist).",
+        "files",
+    ),
+    (
+        "files_clipboard",
+        ("copy file content to clipboard", "wl-copy", "copy to clipboard"),
+        ("copy", "file", "content", "clipboard", "wl-copy"),
+        "wl-copy < /path/to/file",
+        "Copies the contents of a file directly to the Wayland clipboard.",
+        "files",
+    ),
+    (
+        "files_disk_usage",
+        ("disk usage by directory", "directory sizes", "du -sh", "check disk space", "free disk"),
+        ("show", "disk", "usage", "directory", "space", "du", "df"),
+        "du -sh * | sort -h",
+        "Shows human-readable disk usage per item in the current directory sorted by size.",
+        "files",
+    ),
+    (
+        "files_largest",
+        ("find largest files", "find large files", "files over 1gb", "largest file"),
+        ("find", "large", "largest", "files", "1gb", "size", "biggest"),
+        "find . -type f -size +1G -exec ls -lh {} + 2>/dev/null || find . -type f -exec du -h {} + | sort -rh | head -n 10",
+        "Finds the largest files (or files over 1 GB) sorted by size.",
+        "files",
+    ),
+    (
+        "files_tar_xz",
+        ("compress a folder to tar.xz", "tar.xz", "tar -cjvf"),
+        ("compress", "folder", "directory", "tar.xz", "archive"),
+        "tar -cJvf archive.tar.xz <folder>",
+        "Compresses a folder into an `.tar.xz` archive.",
+        "files",
+    ),
+    (
+        "files_extract_targz",
+        ("extract a .tar.gz", "extract tar.gz", "tar -xzvf", "untar"),
+        ("extract", "tar.gz", "tgz", "archive", "untar"),
+        "tar -xzvf archive.tar.gz",
+        "Extracts a gzip-compressed `.tar.gz` archive into the current directory.",
+        "files",
+    ),
+    (
+        "files_smart_nvme",
+        ("smart status", "nvme disk", "smartctl"),
+        ("check", "smart", "status", "nvme", "disk", "health"),
+        "sudo smartctl -a /dev/nvme0n1",
+        "Displays full SMART health and wear information for the NVMe drive.",
+        "files",
+    ),
+    (
+        "files_md_to_pdf",
+        ("convert markdown to pdf", "markdown to pdf", "pandoc"),
+        ("convert", "markdown", "pdf", "pandoc"),
+        "pandoc input.md -o output.pdf",
+        "Converts a Markdown document to PDF using Pandoc.",
+        "files",
+    ),
+    (
+        "files_search_todo",
+        ("search recursively for todo", "grep -rn", "find todo"),
+        ("search", "recursively", "todo", "code", "grep", "rg"),
+        'rg "TODO" . || grep -rn "TODO" .',
+        "Recursively searches for `TODO` comments across all source files in the current directory.",
+        "files",
+    ),
+    (
+        "files_sed_replace",
+        ("replace text in many files", "replace with sed", "sed -i"),
+        ("replace", "text", "many", "files", "sed"),
+        "sed -i 's/old_text/new_text/g' *.txt",
+        "Replaces matching text in-place across the target files using `sed`.",
+        "files",
+    ),
+    (
+        "files_lsof_pid",
+        ("open files for a pid", "lsof -p"),
+        ("show", "open", "files", "pid", "lsof"),
+        "lsof -p <PID>",
+        "Lists all open file descriptors held by the specified process ID (`<PID>`).",
+        "files",
+    ),
+    (
+        "files_bench_disk",
+        ("benchmark disk read", "disk speed", "fio or dd"),
+        ("benchmark", "disk", "read", "speed", "fio", "dd"),
+        "dd if=/dev/zero of=/tmp/how_bench.img bs=1M count=256 conv=fdatasync && rm -f /tmp/how_bench.img",
+        "Runs a quick sequential throughput test using `dd` with `fdatasync`.",
+        "files",
+    ),
+    # --- System, Users, Kernel & Systemd ---
+    (
+        "sys_memory",
+        ("check memory usage", "ram usage", "free memory", "free -h"),
+        ("check", "memory", "ram", "usage", "free"),
+        "free -h",
+        "Displays total, used, and available RAM and swap memory in human-readable units.",
+        "system",
+    ),
+    (
+        "sys_kernel",
+        ("show kernel version", "check kernel", "uname -r"),
+        ("show", "check", "kernel", "version", "uname"),
+        "uname -r",
+        "Prints the running Linux kernel release version.",
+        "system",
+    ),
+    (
+        "sys_hostname",
+        ("change hostname", "set hostname", "hostnamectl"),
+        ("change", "set", "hostname", "hostnamectl"),
+        "sudo hostnamectl set-hostname <new-hostname>",
+        "Sets the system hostname via systemd `hostnamectl`.",
+        "system",
+    ),
+    (
+        "sys_realname",
+        ("change my name", "chfn"),
+        ("change", "name", "full", "user", "chfn"),
+        'sudo usermod -c "Full Name" $USER',
+        "Updates the GECOS full-name field for your Linux user account.",
+        "system",
+    ),
+    (
+        "sys_username",
+        ("change username", "usermod -l"),
+        ("change", "username", "usermod", "login"),
+        "sudo usermod -l <new-user> -d /home/<new-user> -m <old-user>",
+        "Renames a Linux user account and moves its home directory.",
+        "system",
+    ),
+    (
+        "sys_active_users",
+        ("display active users", "logged in users", "who"),
+        ("display", "show", "active", "users", "logged", "who"),
+        "who",
+        "Lists users currently logged into the system.",
+        "system",
+    ),
+    (
+        "sys_locale_polish",
+        ("change language to polish", "set locale", "localectl"),
+        ("change", "language", "polish", "locale", "localectl"),
+        "sudo localectl set-locale LANG=pl_PL.UTF-8",
+        "Sets the system locale to Polish (`pl_PL.UTF-8`).",
+        "system",
+    ),
+    (
+        "sys_kb_layout",
+        ("keyboard layout to pl", "set keyboard layout"),
+        ("set", "keyboard", "layout", "pl", "hyprctl", "localectl"),
+        "hyprctl keyword input:kb_layout pl || localectl set-x11-keymap pl",
+        "Sets the active keyboard layout to Polish (`pl`).",
+        "system",
+    ),
+    (
+        "sys_touchpad_typing",
+        ("disable touchpad while typing", "disable_while_typing"),
+        ("disable", "touchpad", "while", "typing"),
+        "hyprctl keyword input:touchpad:disable_while_typing true",
+        "Enables palm-rejection (`disable_while_typing`) for the touchpad in Hyprland.",
+        "system",
+    ),
+    (
+        "sys_current_shell",
+        ("what console am i using", "check shell", "which shell"),
+        ("check", "what", "console", "shell", "terminal", "using"),
+        'echo "$SHELL ($TERM)"',
+        "Prints your current login shell and terminal emulator type.",
+        "system",
+    ),
+    (
+        "sys_snapshot_btrfs",
+        ("simple snapshot", "btrfs snapshot", "safe copy of my system", "snapper"),
+        ("snapshot", "btrfs", "snapper", "safe", "copy", "system"),
+        'sudo snapper -c root create --description "pre-change backup"',
+        "Creates a read-only Btrfs system snapshot via `snapper` before making risky changes.",
+        "system",
+    ),
+    (
+        "sys_failed_units",
+        ("systemd failed units", "failed services", "systemctl --failed"),
+        ("show", "systemd", "failed", "units", "services"),
+        "systemctl --failed",
+        "Lists all systemd units that are currently in a failed state.",
+        "system",
+    ),
+    (
+        "sys_boot_blame",
+        ("systemd boot blame", "systemd-analyze blame", "boot time"),
+        ("show", "systemd", "boot", "blame", "times", "slow"),
+        "systemd-analyze blame | head -n 20",
+        "Lists the top 20 systemd units sorted by the time they took to initialize at boot.",
+        "system",
+    ),
+    (
+        "sys_journal_follow",
+        ("follow journalctl", "journalctl logs for a service", "journalctl -u"),
+        ("follow", "journalctl", "logs", "service", "tail"),
+        "journalctl -u <service> -f",
+        "Streams live systemd journal logs for the specified service.",
+        "system",
+    ),
+    (
+        "sys_tmux_new",
+        ("new tmux session", "tmux session named"),
+        ("create", "new", "tmux", "session", "named", "work"),
+        "tmux new -s work",
+        "Creates and attaches to a new `tmux` session named `work`.",
+        "system",
+    ),
+    (
+        "sys_mount_usb_ro",
+        ("mount a usb drive read-only", "mount read-only"),
+        ("mount", "usb", "drive", "read-only", "ro"),
+        "sudo mount -o ro /dev/sdX1 /mnt",
+        "Mounts a USB partition in read-only (`-o ro`) mode at `/mnt`.",
+        "system",
+    ),
+    (
+        "sys_lock_screen",
+        ("lock screen from terminal", "hyprlock", "lock session"),
+        ("lock", "screen", "terminal", "hyprlock", "loginctl"),
+        "hyprlock || loginctl lock-session",
+        "Immediately locks the current desktop session.",
+        "system",
+    ),
+    (
+        "sys_suspend",
+        ("suspend the system", "systemctl suspend", "sleep system"),
+        ("suspend", "system", "sleep", "systemctl"),
+        "systemctl suspend",
+        "Suspends the system to RAM.",
+        "system",
+    ),
+    (
+        "sys_cron_list",
+        ("list cron jobs", "crontab -l"),
+        ("list", "cron", "jobs", "current", "user", "crontab"),
+        "crontab -l",
+        "Lists scheduled cron jobs for the current user.",
+        "system",
+    ),
+    (
+        "sys_gpu_amd",
+        ("watch gpu usage on amd", "amd gpu", "radeontop", "nvtop"),
+        ("watch", "gpu", "usage", "amd", "nvtop"),
+        "nvtop || watch -n 1 cat /sys/class/drm/card*/device/gpu_busy_percent",
+        "Monitors live AMD GPU utilization in the terminal.",
+        "media",
+    ),
+    # --- Network & SSH ---
+    (
+        "net_ping",
+        ("ping internet", "ping google", "test internet"),
+        ("ping", "internet", "google", "network", "connection"),
+        "ping -c 4 1.1.1.1",
+        "Sends 4 ICMP echo requests to Cloudflare DNS (`1.1.1.1`) to verify internet connectivity.",
+        "network",
+    ),
+    (
+        "net_listening_ports",
+        ("listening tcp ports", "listening ports", "open ports", "ss -tulpn"),
+        ("list", "listening", "tcp", "ports", "open", "ss"),
+        "ss -tulpn",
+        "Lists all listening TCP and UDP sockets along with their owning processes.",
+        "network",
+    ),
+    (
+        "net_kill_port",
+        ("kill process listening on port", "kill port 8080", "fuser -k"),
+        ("kill", "process", "listening", "port", "8080"),
+        "fuser -k 8080/tcp || kill $(lsof -t -i:8080)",
+        "Terminates the process currently bound to TCP port 8080.",
+        "network",
+    ),
+    (
+        "net_restart_nm",
+        ("restart networkmanager", "restart network"),
+        ("restart", "networkmanager", "network", "systemctl"),
+        "sudo systemctl restart NetworkManager",
+        "Restarts the NetworkManager systemd service.",
+        "network",
+    ),
+    (
+        "net_ssh_copy_id",
+        ("copy ssh public key", "ssh-copy-id"),
+        ("copy", "ssh", "public", "key", "remote", "host"),
+        "ssh-copy-id user@hostname",
+        "Installs your local SSH public key into the remote host's `~/.ssh/authorized_keys`.",
+        "network",
+    ),
+    (
+        "net_ssh_keygen",
+        ("generate ed25519 ssh key", "ssh-keygen", "create ssh key"),
+        ("generate", "create", "ed25519", "ssh", "key"),
+        'ssh-keygen -t ed25519 -C "your_email@example.com"',
+        "Generates a new Ed25519 SSH key pair in `~/.ssh/`.",
+        "network",
+    ),
+    (
+        "net_dns_test",
+        ("test dns resolution", "dig example.com", "resolvectl"),
+        ("test", "dns", "resolution", "example.com", "dig"),
+        "dig +short example.com || resolvectl query example.com",
+        "Queries DNS records to verify domain name resolution.",
+        "network",
+    ),
+    (
+        "net_public_ip",
+        ("show my public ip", "public ip address", "external ip"),
+        ("show", "public", "external", "ip", "address", "curl"),
+        "curl -s https://ifconfig.me && echo",
+        "Fetches and prints your public external IP address.",
+        "network",
+    ),
+    (
+        "net_openssl_cert",
+        ("openssl certificate expiry", "check ssl cert", "certificate expiry"),
+        ("check", "openssl", "certificate", "expiry", "ssl", "tls", "host"),
+        "echo | openssl s_client -servername <host> -connect <host>:443 2>/dev/null | openssl x509 -noout -dates",
+        "Checks the TLS certificate validity and expiration dates for `<host>:443`.",
+        "network",
+    ),
+    (
+        "net_bandwidth_watch",
+        ("watch network bandwidth", "bandwidth per process", "nethogs"),
+        ("watch", "network", "bandwidth", "process", "nethogs"),
+        "sudo nethogs || ss -tin",
+        "Monitors live network bandwidth usage grouped by process.",
+        "network",
+    ),
+    (
+        "net_ssh_port_forward",
+        ("forward local port", "ssh port forward", "ssh -l"),
+        ("forward", "local", "port", "3000", "remote", "80", "ssh", "tunnel"),
+        "ssh -L 3000:localhost:80 user@remote-host",
+        "Forwards local port 3000 to port 80 on `remote-host` over an SSH tunnel.",
+        "network",
+    ),
+    (
+        "media_bluetooth",
+        ("enable bluetooth", "connect headphones", "bluetoothctl"),
+        ("enable", "bluetooth", "connect", "headphones", "pair"),
+        "rfkill unblock bluetooth && bluetoothctl power on && bluetoothctl connect <MAC>",
+        "Unblocks and powers on the Bluetooth adapter and connects to a paired device.",
+        "media",
+    ),
+    # --- Containers / Docker & Editors ---
+    (
+        "docker_install",
+        ("install docker", "add user to docker group"),
+        ("install", "docker", "add", "user", "group"),
+        "sudo pacman -S docker && sudo systemctl enable --now docker && sudo usermod -aG docker $USER",
+        "Installs Docker, starts the daemon, and adds your user to the `docker` group.",
+        "containers",
+    ),
+    (
+        "docker_prune",
+        ("prune unused docker", "docker image prune", "clean docker images"),
+        ("prune", "unused", "docker", "images", "clean"),
+        "docker image prune -a -f",
+        "Removes all unused Docker images to reclaim disk space.",
+        "containers",
+    ),
+    (
+        "docker_run_alpine",
+        ("one-off alpine container", "run alpine interactively", "docker run -it alpine"),
+        ("run", "one-off", "alpine", "container", "interactively", "docker"),
+        "docker run --rm -it alpine sh",
+        "Runs an interactive, disposable Alpine Linux container that removes itself on exit.",
+        "containers",
+    ),
+    (
+        "editor_micro_cursor",
+        ("micro open file", "cursor in the end", "micro +"),
+        ("make", "micro", "open", "file", "cursor", "end"),
+        "micro +999999:1 <file>",
+        "Opens `<file>` in the `micro` editor with the cursor positioned at the end of the file.",
+        "editor",
+    ),
+    (
+        "editor_neovim_intellij",
+        ("key shortcuts similar to intellij", "neovim profile"),
+        ("neovim", "profile", "download", "shortcuts", "intellij", "editor"),
+        "mv ~/.config/nvim ~/.config/nvim.bak && git clone https://github.com/LazyVim/starter ~/.config/nvim",
+        "Backs up your current Neovim config and installs a modern IDE-style starter profile.",
+        "editor",
+    ),
+)
+
+REFLEX_FRAMING_STOPWORDS = {
+    "how", "to", "do", "does", "did", "i", "can", "could", "should", "would",
+    "in", "on", "at", "for", "with", "from", "by", "of", "the", "a", "an",
+    "my", "your", "our", "is", "are", "am", "be", "was", "were", "using",
+    "what", "which", "please", "me", "some", "any", "already", "when", "yet",
+    "without", "too", "another", "one", "anotherone", "just", "installed",
+    "official", "installer", "want", "before", "dangerous", "command", "simple",
+    "full", "current", "currently",
+}
+
+
+def apply_reflex_slot_filling(cmd: str, raw_query: str) -> str:
+    """
+    Golden Alternative (GA) Dynamic Slot Filler:
+    Substitutes literal parameters from the user's natural query (port numbers, PIDs, size thresholds,
+    tmux session names, systemd unit names, workspace numbers) into the matched System-1 reflex command.
+    """
+    import re
+    out = cmd
+    q = (raw_query or "").strip()
+
+    # 1. Port number slot (e.g. "kill process on port 3000" -> replace 8080 with 3000)
+    port_m = re.search(r"\bport\s+(\d{2,5})\b", q, re.IGNORECASE)
+    if port_m and "8080" in out:
+        out = out.replace("8080", port_m.group(1))
+
+    # 2. PID slot (e.g. "open files for pid 4242" -> replace <PID> with 4242)
+    pid_m = re.search(r"\bpid\s+(\d+)\b", q, re.IGNORECASE)
+    if pid_m and "<PID>" in out:
+        out = out.replace("<PID>", pid_m.group(1))
+
+    # 3. File size threshold slot (e.g. "find large files over 500M" -> replace +1G with +500M)
+    size_m = re.search(r"\b(?:over|larger\s+than|above)\s+(\d+\s*[KMGTP]B?)\b", q, re.IGNORECASE)
+    if size_m and "+1G" in out:
+        raw_sz = size_m.group(1).upper().replace(" ", "").rstrip("B")
+        out = out.replace("+1G", f"+{raw_sz}")
+
+    # 4. Tmux session name slot (e.g. "tmux session named dev" -> replace work with dev)
+    tmux_m = re.search(r"\btmux\s+session\s+(?:named|called)\s+([a-zA-Z0-9_\-]+)\b", q, re.IGNORECASE)
+    if tmux_m and "tmux new -s work" in out:
+        out = out.replace("tmux new -s work", f"tmux new -s {tmux_m.group(1)}")
+
+    # 5. Systemd service name slot (e.g. "follow journalctl logs for nginx" -> replace <service> with nginx)
+    svc_m = re.search(r"\b(?:for|service)\s+([a-zA-Z0-9_\-@\.]+?)(?:\s+service)?\s*[?.!]*$", q, re.IGNORECASE)
+    if svc_m and "<service>" in out:
+        cand_svc = svc_m.group(1).strip()
+        if cand_svc.lower() not in ("a", "the", "my", "some", "any", "systemd", "service"):
+            out = out.replace("<service>", cand_svc)
+
+    # 6. Hyprland workspace number slot (e.g. "move window to workspace 5" -> replace workspace 3 with 5)
+    ws_m = re.search(r"\bworkspace\s+(\d{1,2})\b", q, re.IGNORECASE)
+    if ws_m and "movetoworkspace 3" in out:
+        out = out.replace("movetoworkspace 3", f"movetoworkspace {ws_m.group(1)}")
+
+    return out
+
+
+def lookup_episodic_history(query: str) -> dict | None:
+    """
+    Golden Alternative (GA) Personal Episodic Memory (<0.5ms, offline):
+    Searches `~/.config/how/commands.log` for previously `[EXECUTED]` commands on this machine
+    whose query matches the user's current intent.
+    """
+    import re
+    if not query or not os.path.isfile(COMMANDS_LOG):
+        return None
+
+    q_norm = re.sub(r"^(?:in omarchy console:? )?(?:how (?:do i |can i |to )?|to )", "", query.strip().lower()).strip(" ?!.")
+    q_tokens = {t for t in re.findall(r"[a-z0-9_\-\.]+", q_norm) if t not in REFLEX_FRAMING_STOPWORDS and len(t) > 1}
+    if not q_tokens:
+        return None
+
+    try:
+        with open(COMMANDS_LOG, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()[-200:]
+    except Exception:
+        return None
+
+    for line in reversed(lines):
+        if "[EXECUTED]" not in line:
+            continue
+        m = re.search(r'Query:\s*"([^"]+)"\s*\|\s*Command:\s*(.+)$', line.strip())
+        if not m:
+            continue
+        past_q, past_cmd = m.group(1).strip(), m.group(2).strip()
+        if not past_cmd or past_q.lower().startswith("where:"):
+            continue
+        pq_norm = re.sub(r"^(?:in omarchy console:? )?(?:how (?:do i |can i |to )?|to )", "", past_q.lower()).strip(" ?!.")
+        if pq_norm == q_norm:
+            return {
+                "id": "episodic_exact",
+                "command": past_cmd,
+                "explanation": f"Previously executed command on this machine for '{past_q}'.",
+                "category": "episodic",
+                "safety": classify_command_safety(past_cmd),
+                "score": 9.5,
+                "source": "system1:episodic-history",
+            }
+        pq_tokens = {t for t in re.findall(r"[a-z0-9_\-\.]+", pq_norm) if t not in REFLEX_FRAMING_STOPWORDS and len(t) > 1}
+        if pq_tokens and len(q_tokens & pq_tokens) / max(len(q_tokens), len(pq_tokens)) >= 0.85:
+            return {
+                "id": "episodic_fuzzy",
+                "command": past_cmd,
+                "explanation": f"Previously executed command on this machine for '{past_q}'.",
+                "category": "episodic",
+                "safety": classify_command_safety(past_cmd),
+                "score": 8.5,
+                "source": "system1:episodic-history",
+            }
+    return None
+
+
+def lookup_local_tldr_reflex(query: str) -> dict | None:
+    """
+    Golden Alternative (GA) Local `tldr` Recipe Extractor (<2ms, offline):
+    Parses installed local `tldr` markdown pages for candidate commands mentioned in the query
+    and returns the highest-scoring `- Description:` + `` `command` `` recipe.
+    """
+    import re
+    q_low = (query or "").lower()
+    q_tokens = {t for t in re.findall(r"[a-z0-9_\-]+", q_low) if t not in REFLEX_FRAMING_STOPWORDS and len(t) > 1}
+    if not q_tokens:
+        return None
+
+    for cand in extract_candidate_commands(q_low)[:3]:
+        md = get_tldr_content(cand)
+        if not md:
+            continue
+        desc = ""
+        best_pair = None
+        best_sc = 0.0
+        for ln in md.splitlines():
+            s = ln.strip()
+            if s.startswith("- "):
+                desc = s[2:].strip().rstrip(":")
+            elif s.startswith("`") and s.endswith("`") and len(s) > 2 and desc:
+                ex_cmd = s[1:-1].strip().replace("{{", "<").replace("}}", ">")
+                d_tokens = {t for t in re.findall(r"[a-z0-9_\-]+", desc.lower()) if t not in REFLEX_FRAMING_STOPWORDS}
+                overlap = len(q_tokens & d_tokens)
+                sc = overlap * 1.5 + (1.0 if cand in q_tokens else 0.0)
+                if sc > best_sc and overlap >= 1:
+                    best_sc = sc
+                    best_pair = (ex_cmd, desc)
+        if best_pair and best_sc >= 2.5:
+            ex_cmd, desc = best_pair
+            return {
+                "id": f"tldr:{cand}",
+                "command": ex_cmd,
+                "explanation": f"{desc} (from local `tldr {cand}`).",
+                "category": "tldr",
+                "safety": classify_command_safety(ex_cmd),
+                "score": round(best_sc, 3),
+                "source": f"system1:local-tldr:{cand}",
+            }
+    return None
+
+
+def lookup_system1_reflex(query: str) -> dict | None:
+    """
+    Tier-0 System-1 Offline Reflex Engine (<3ms, zero network calls).
+    Uses:
+    1. Typo normalization + weighted anchor/BM25-style token scoring over `SYSTEM1_REFLEX_KB` + dynamic slot filling
+    2. Personal Episodic History (`~/.config/how/commands.log` `[EXECUTED]` entries)
+    3. Local `# omarchy:*` header example extraction and local `tldr` markdown recipe extraction.
+    Returns a dict `{"id", "command", "explanation", "category", "safety", "score", "source"}`
+    or `None` when uncertain.
+    """
+    import re
+    if not query or not query.strip():
+        return None
+
+    improved_q, _ = improve_query_locally(query)
+    q_low = improved_q.lower().strip()
+    for pfx in ("in omarchy console how ", "in omarchy console: how ", "in omarchy console: ", "how do i ", "how can i ", "how to ", "to "):
+        if q_low.startswith(pfx):
+            q_low = q_low[len(pfx):].strip()
+
+    raw_tokens = re.findall(r"[a-z0-9_\-\.]+", q_low)
+    if not raw_tokens:
+        return None
+
+    content_tokens = [
+        t for t in raw_tokens
+        if t not in REFLEX_FRAMING_STOPWORDS and t not in ("omarchy", "linux", "arch", "console", "terminal", "cli")
+    ]
+    if not content_tokens:
+        content_tokens = [t for t in raw_tokens if t not in REFLEX_FRAMING_STOPWORDS]
+    if not content_tokens:
+        return None
+
+    token_set = set(raw_tokens)
+    best_entry = None
+    best_score = 0.0
+
+    for slug, anchors, keywords, cmd, explanation, category in SYSTEM1_REFLEX_KB:
+        anchor_bonus = 0.0
+        for anc in anchors:
+            if anc in q_low:
+                anchor_bonus = max(anchor_bonus, 2.5 if " " in anc else 1.5)
+
+        kw_set = set(keywords)
+        matched_kws = token_set.intersection(kw_set)
+        if not matched_kws and anchor_bonus == 0.0:
+            continue
+
+        matched_content = [t for t in content_tokens if t in kw_set or any(t in a for a in anchors)]
+        if not matched_content:
+            continue
+
+        coverage = len(matched_content) / max(1, len(content_tokens))
+        kw_precision = len(matched_kws) / max(1, len(kw_set))
+        score = anchor_bonus + (len(matched_kws) * 1.1) + (coverage * 2.2) + (kw_precision * 0.8)
+
+        # Require either a phrase anchor match OR strong content coverage (>= 0.6) with >= 2 matched keywords
+        if anchor_bonus == 0.0 and (len(matched_kws) < 2 or coverage < 0.6):
+            continue
+        if coverage < 0.34 and anchor_bonus < 2.0:
+            continue
+
+        if score > best_score:
+            best_score = score
+            best_entry = (slug, cmd, explanation, category, score)
+
+    if best_entry and best_score >= 3.2:
+        slug, cmd, explanation, category, score = best_entry
+        filled_cmd = apply_reflex_slot_filling(cmd, query)
+        return {
+            "id": slug,
+            "command": filled_cmd,
+            "explanation": explanation,
+            "category": category,
+            "safety": classify_command_safety(filled_cmd),
+            "score": round(score, 3),
+            "source": "system1:basal-kb",
+        }
+
+    episodic = lookup_episodic_history(query)
+    if episodic:
+        return episodic
+
+    # Fallback local Tier-0 check: inspect `# omarchy:examples=` header on disk without subprocess
+    import shutil
+    for cand in extract_candidate_commands(q_low)[:2]:
+        if cand == "omarchy" or cand.startswith("omarchy-"):
+            c_path = shutil.which(cand)
+            if c_path:
+                hdr = parse_omarchy_header(c_path)
+                if hdr and "Examples:" in hdr:
+                    ex_line = [ln.split("Examples:", 1)[1].strip() for ln in hdr.splitlines() if ln.startswith("Examples:")][0]
+                    first_ex = ex_line.split("|")[0].strip()
+                    if first_ex:
+                        return {
+                            "id": f"omarchy_hdr:{cand}",
+                            "command": first_ex,
+                            "explanation": f"Local Omarchy command example from {c_path}.",
+                            "category": "omarchy",
+                            "safety": classify_command_safety(first_ex),
+                            "score": 3.0,
+                            "source": f"system1:omarchy-header:{cand}",
+                        }
+
+    tldr_res = lookup_local_tldr_reflex(q_low)
+    if tldr_res:
+        return tldr_res
+
+    return None
+
+
+def run_offline_reflex(raw_query: str, verbosity: str = None) -> bool:
+    """
+    Executes Tier-0 System-1 Offline Reflex resolution (<3ms, zero network calls).
+    Returns True if a reflex command was found and emitted, or False if uncertain ('I don't know').
+    """
+    import time
+    t0 = time.perf_counter()
+    cfg = load_config()
+    if verbosity is None:
+        verbosity = cfg.get("verbosity", DEFAULT_VERBOSITY)
+    if verbosity not in ("zero", "low", "normal"):
+        verbosity = "normal"
+
+    res = lookup_system1_reflex(raw_query)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    if not res:
+        if verbosity == "zero":
+            print("I don't know\n")
+        else:
+            print(f"\n{CYAN}{BOLD}how ❯{RESET} {GREEN}[reflex • offline {elapsed_ms:.2f}ms]{RESET}\n")
+            print(f"I don't know{RESET}\n")
+        return False
+
+    cmd = res["command"]
+    explanation = res["explanation"]
+    formatted_text = f"```bash\n{cmd}\n```\n{explanation}"
+
+    if verbosity != "zero":
+        v_info = f", {verbosity}" if verbosity != "normal" else ""
+        print(
+            f"\n{CYAN}{BOLD}how ❯{RESET} {GREEN}[reflex • offline {elapsed_ms:.2f}ms]{RESET} "
+            f"{DIM}({res['source']}{v_info}){RESET}\n"
+        )
+        print(formatted_text + f"{RESET}\n")
+
+    emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=False, raw_text=formatted_text)
+    return True
+
+
+WHERE_KNOWLEDGE_BASE = (
+    (
+        "hypr_monitors",
+        ("hyprland", "monitor", "monitors", "display", "displays", "resolution", "scale", "screen"),
+        "Hyprland Monitors & Display Config",
+        "~/.config/hypr/monitors.conf",
+        "config",
+        "cat ~/.config/hypr/monitors.conf",
+        "Configures monitor resolutions, refresh rates, scaling, and multi-display layout in Hyprland.",
+    ),
+    (
+        "hypr_bindings",
+        ("hyprland", "keybindings", "bindings", "shortcuts", "hotkeys", "keys", "bind"),
+        "Hyprland Keybindings Config",
+        "~/.config/hypr/bindings.conf",
+        "config",
+        "cat ~/.config/hypr/bindings.conf",
+        "User keybindings and window management shortcuts in Omarchy / Hyprland.",
+    ),
+    (
+        "hypr_looknfeel",
+        ("hyprland", "looknfeel", "appearance", "gaps", "borders", "animations", "blur", "rounding", "opacity"),
+        "Hyprland Look & Feel Config",
+        "~/.config/hypr/looknfeel.conf",
+        "config",
+        "cat ~/.config/hypr/looknfeel.conf",
+        "Window gaps, border colors, blur, animations, and rounding settings in Hyprland.",
+    ),
+    (
+        "hypr_input",
+        ("hyprland", "input", "keyboard", "touchpad", "mouse", "layout", "sensitivity"),
+        "Hyprland Input & Touchpad Config",
+        "~/.config/hypr/input.conf",
+        "config",
+        "cat ~/.config/hypr/input.conf",
+        "Keyboard layout, repeat rate, mouse sensitivity, and touchpad settings.",
+    ),
+    (
+        "hypr_autostart",
+        ("hyprland", "autostart", "startup", "exec-once"),
+        "Hyprland Autostart Config",
+        "~/.config/hypr/autostart.conf",
+        "config",
+        "cat ~/.config/hypr/autostart.conf",
+        "Applications and daemons launched automatically (`exec-once`) when Hyprland starts.",
+    ),
+    (
+        "hypr_main",
+        ("hyprland", "hyprland.conf", "main", "compositor"),
+        "Hyprland Main Configuration",
+        "~/.config/hypr/hyprland.conf",
+        "config",
+        "cat ~/.config/hypr/hyprland.conf",
+        "Primary Hyprland compositor entry configuration file.",
+    ),
+    (
+        "hypr_idle",
+        ("hypridle", "idle", "dpms", "screensaver", "auto-suspend"),
+        "Hypridle Idle Daemon Config",
+        "~/.config/hypr/hypridle.conf",
+        "config",
+        "cat ~/.config/hypr/hypridle.conf",
+        "Idle timeouts for screen dimming, locking, DPMS off, and system suspend.",
+    ),
+    (
+        "hypr_lock",
+        ("hyprlock", "lockscreen", "lock", "screen"),
+        "Hyprlock Screen Locker Config",
+        "~/.config/hypr/hyprlock.conf",
+        "config",
+        "cat ~/.config/hypr/hyprlock.conf",
+        "Lock screen layout, background, clock, and password prompt styling.",
+    ),
+    (
+        "omarchy_config",
+        ("omarchy", "theme", "themes", "current"),
+        "Omarchy User Config & Active Theme",
+        "~/.config/omarchy",
+        "dir",
+        "ls -la ~/.config/omarchy",
+        "Omarchy user configuration directory and active theme symlinks (`~/.config/omarchy/current/theme`).",
+    ),
+    (
+        "omarchy_share",
+        ("omarchy", "scripts", "share", "defaults", "bins"),
+        "Omarchy System Share & Scripts",
+        "~/.local/share/omarchy",
+        "dir",
+        "ls -la ~/.local/share/omarchy",
+        "Omarchy core scripts, default configs, and bundled themes.",
+    ),
+    (
+        "uwsm_env",
+        ("uwsm", "environment", "env", "screenshot", "variables"),
+        "UWSM Session Environment Overrides",
+        "~/.config/uwsm/env",
+        "config",
+        "cat ~/.config/uwsm/env",
+        "Wayland session environment variables (and `~/.config/uwsm/env.d/`).",
+    ),
+    (
+        "waybar_config",
+        ("waybar", "bar", "panel", "status bar", "top bar", "tray", "clock"),
+        "Waybar Status Bar Config",
+        "~/.config/waybar/config.jsonc",
+        "config",
+        "cat ~/.config/waybar/config.jsonc",
+        "Waybar modules, layout, and bar styling (`~/.config/waybar/style.css`).",
+    ),
+    (
+        "alacritty_config",
+        ("alacritty", "terminal"),
+        "Alacritty Terminal Config",
+        "~/.config/alacritty/alacritty.toml",
+        "config",
+        "cat ~/.config/alacritty/alacritty.toml",
+        "Alacritty terminal font, opacity, padding, and color configuration.",
+    ),
+    (
+        "ghostty_config",
+        ("ghostty", "terminal"),
+        "Ghostty Terminal Config",
+        "~/.config/ghostty/config",
+        "config",
+        "cat ~/.config/ghostty/config",
+        "Ghostty terminal configuration file.",
+    ),
+    (
+        "kitty_config",
+        ("kitty", "terminal"),
+        "Kitty Terminal Config",
+        "~/.config/kitty/kitty.conf",
+        "config",
+        "cat ~/.config/kitty/kitty.conf",
+        "Kitty terminal configuration file.",
+    ),
+    (
+        "foot_config",
+        ("foot", "terminal"),
+        "Foot Terminal Config",
+        "~/.config/foot/foot.ini",
+        "config",
+        "cat ~/.config/foot/foot.ini",
+        "Foot Wayland terminal configuration file.",
+    ),
+    (
+        "mako_config",
+        ("mako", "notifications", "notification", "popups"),
+        "Mako Notification Daemon Config",
+        "~/.config/mako/config",
+        "config",
+        "cat ~/.config/mako/config",
+        "Desktop notification popup styling and timeout rules.",
+    ),
+    (
+        "walker_config",
+        ("walker", "launcher", "app launcher", "menu"),
+        "Walker App Launcher Config",
+        "~/.config/walker/config.json",
+        "config",
+        "ls -la ~/.config/walker",
+        "Application launcher (`Super + Space`) configuration.",
+    ),
+    (
+        "pacman_conf",
+        ("pacman", "pacman.conf", "repositories", "multilib", "arch package"),
+        "Pacman Package Manager Config",
+        "/etc/pacman.conf",
+        "config",
+        "cat /etc/pacman.conf",
+        "System-wide Arch Linux Pacman configuration and enabled repositories.",
+    ),
+    (
+        "pacman_mirrorlist",
+        ("pacman", "mirrorlist", "mirrors"),
+        "Pacman Mirrorlist",
+        "/etc/pacman.d/mirrorlist",
+        "config",
+        "head -n 30 /etc/pacman.d/mirrorlist",
+        "Ordered list of Arch Linux package mirrors.",
+    ),
+    (
+        "pacman_log",
+        ("pacman", "log", "pacman.log", "installed history"),
+        "Pacman Transaction Log",
+        "/var/log/pacman.log",
+        "log",
+        "tail -n 40 /var/log/pacman.log",
+        "Log of all Pacman package installations, upgrades, and removals.",
+    ),
+    (
+        "pacman_lock",
+        ("pacman", "lock", "db.lck", "database lock"),
+        "Pacman Database Lock File",
+        "/var/lib/pacman/db.lck",
+        "config",
+        "ls -la /var/lib/pacman/db.lck",
+        "Lock file created while Pacman is modifying the package database.",
+    ),
+    (
+        "systemd_user",
+        ("systemd", "user", "service", "services", "units", "timer"),
+        "Systemd User Units Directory",
+        "~/.config/systemd/user",
+        "dir",
+        "ls -la ~/.config/systemd/user",
+        "Per-user systemd service and timer unit files (`systemctl --user`).",
+    ),
+    (
+        "systemd_system",
+        ("systemd", "system", "service", "services", "units", "daemon"),
+        "Systemd System Units Directory",
+        "/etc/systemd/system",
+        "dir",
+        "ls -la /etc/systemd/system",
+        "System-wide custom systemd service and unit overrides.",
+    ),
+    (
+        "systemd_journal",
+        ("journal", "journald", "journalctl", "system logs", "logs", "syslog"),
+        "Systemd Persistent Journal Logs",
+        "/var/log/journal",
+        "log",
+        "journalctl -n 50 --no-pager",
+        "Binary systemd journal log storage (query with `journalctl`).",
+    ),
+    (
+        "ssh_config",
+        ("ssh", "sshd", "authorized_keys", "id_ed25519", "keys"),
+        "SSH Client Config & Keys",
+        "~/.ssh/config",
+        "config",
+        "ls -la ~/.ssh",
+        "User SSH client configuration, keys (`id_ed25519`), and `authorized_keys`.",
+    ),
+    (
+        "sshd_config",
+        ("sshd", "ssh server", "sshd_config"),
+        "OpenSSH Server Daemon Config",
+        "/etc/ssh/sshd_config",
+        "config",
+        "cat /etc/ssh/sshd_config",
+        "System-wide OpenSSH server daemon configuration.",
+    ),
+    (
+        "shell_bashrc",
+        ("bashrc", "bash", "aliases", "profile", "shell config"),
+        "Bash Shell Startup Config",
+        "~/.bashrc",
+        "config",
+        "cat ~/.bashrc",
+        "Interactive Bash shell aliases, functions, and environment setup.",
+    ),
+    (
+        "shell_zshrc",
+        ("zshrc", "zsh"),
+        "Zsh Shell Startup Config",
+        "~/.zshrc",
+        "config",
+        "cat ~/.zshrc",
+        "Interactive Zsh shell configuration file.",
+    ),
+    (
+        "git_config",
+        ("gitconfig", "git config", "git"),
+        "Global Git Configuration",
+        "~/.gitconfig",
+        "config",
+        "cat ~/.gitconfig",
+        "User-level Git configuration (`user.name`, `user.email`, aliases).",
+    ),
+    (
+        "docker_config",
+        ("docker", "daemon.json", "containers"),
+        "Docker Daemon Configuration",
+        "/etc/docker/daemon.json",
+        "config",
+        "cat /etc/docker/daemon.json",
+        "System Docker daemon settings and registry mirrors.",
+    ),
+    (
+        "limine_config",
+        ("limine", "bootloader", "boot", "kernel cmdline"),
+        "Limine Bootloader Configuration",
+        "/boot/limine.conf",
+        "config",
+        "cat /boot/limine.conf",
+        "Limine bootloader menu entries and kernel command-line parameters.",
+    ),
+    (
+        "etc_fstab",
+        ("fstab", "mounts", "partitions", "disks", "filesystems"),
+        "Filesystem Mount Table (fstab)",
+        "/etc/fstab",
+        "config",
+        "cat /etc/fstab",
+        "Static filesystem mount definitions loaded at boot.",
+    ),
+    (
+        "etc_hosts",
+        ("hosts", "dns", "resolv.conf", "hostname"),
+        "Static Hostname Lookup Table",
+        "/etc/hosts",
+        "config",
+        "cat /etc/hosts",
+        "Local hostname-to-IP address mappings (`/etc/hosts` & `/etc/resolv.conf`).",
+    ),
+    (
+        "fonts_dir",
+        ("fonts", "font", "ttf", "otf"),
+        "User Installed Fonts Directory",
+        "~/.local/share/fonts",
+        "dir",
+        "ls -la ~/.local/share/fonts",
+        "User-installed TrueType/OpenType fonts (refresh cache with `fc-cache -fv`).",
+    ),
+)
+
+
+def locate_where_targets(query: str) -> list[dict]:
+    """
+    Fast <5ms read-only spatial locator for configs, logs, binaries, directories, and ports.
+    Combines curated `WHERE_KNOWLEDGE_BASE` with live local filesystem and `PATH` probes.
+    """
+    import re
+    import shutil
+
+    q_clean = (query or "").strip()
+    q_low = q_clean.lower()
+    for pfx in ("where is ", "where are ", "where's ", "where ", "locate ", "path to ", "location of ", "the ", "my "):
+        if q_low.startswith(pfx):
+            q_low = q_low[len(pfx):].strip()
+
+    tokens = [
+        t for t in re.findall(r"[a-z0-9_\-\.]+", q_low)
+        if t not in ("where", "is", "are", "the", "my", "in", "on", "for", "of", "to", "a", "an", "file", "files", "path", "location", "located", "stored", "folder", "dir", "directory", "config", "configuration", "settings")
+    ]
+    all_tokens = set(re.findall(r"[a-z0-9_\-\.]+", q_low))
+    results = []
+    seen_paths = set()
+
+    # 1. Port lookup probe (e.g. "where is port 8080")
+    port_m = re.search(r"\bport\s+(\d{2,5})\b", q_low)
+    if port_m:
+        port_num = port_m.group(1)
+        results.append({
+            "title": f"Listening Socket on TCP/UDP Port {port_num}",
+            "path": f"inet://0.0.0.0:{port_num}",
+            "exists": True,
+            "kind": "port",
+            "inspect_cmd": f"ss -tulpn | grep :{port_num}",
+            "description": f"Inspect process and socket bound to port {port_num}.",
+            "score": 10.0,
+        })
+
+    # 2. `how` own config/cache/log lookup
+    if "how" in all_tokens and any(k in all_tokens for k in ("config", "cache", "log", "history", "db", "settings")):
+        for title, p, kind, cmd, desc in (
+            ("how Configuration File", CONFIG_FILE, "config", f"cat {CONFIG_FILE}", "Active `how` settings and model preferences."),
+            ("how Command History Log", COMMANDS_LOG, "log", f"tail -n 20 {COMMANDS_LOG}", "Log of suggested and executed commands."),
+            ("how SQLite Response Cache", CACHE_DB_FILE, "config", f"ls -lh {CACHE_DB_FILE}", "Sliding-TTL SQLite WAL response cache."),
+        ):
+            seen_paths.add(p)
+            results.append({
+                "title": title,
+                "path": p,
+                "exists": os.path.exists(p),
+                "kind": kind,
+                "inspect_cmd": cmd,
+                "description": desc,
+                "score": 9.0,
+            })
+
+    # 3. Score curated WHERE_KNOWLEDGE_BASE entries
+    for slug, kw_tuple, title, raw_path, kind, inspect_cmd, desc in WHERE_KNOWLEDGE_BASE:
+        score = 0.0
+        for kw in kw_tuple:
+            if kw in q_low:
+                score += 2.5 if " " in kw else 1.8
+            elif kw in all_tokens:
+                score += 1.8
+        if any(t in raw_path.lower() for t in tokens):
+            score += 1.5
+        if score > 0:
+            exp_path = os.path.expanduser(raw_path)
+            exists = os.path.exists(exp_path)
+            if exists:
+                score += 0.4
+            if exp_path not in seen_paths:
+                seen_paths.add(exp_path)
+                results.append({
+                    "title": title,
+                    "path": exp_path,
+                    "exists": exists,
+                    "kind": kind,
+                    "inspect_cmd": inspect_cmd,
+                    "description": desc,
+                    "score": score,
+                })
+
+    # 4. Live read-only local probes: `~/.config/<token>` and `shutil.which(<token>)`
+    for tok in (tokens or list(all_tokens)):
+        if len(tok) < 2:
+            continue
+        user_cfg_dir = os.path.expanduser(f"~/.config/{tok}")
+        if os.path.exists(user_cfg_dir) and user_cfg_dir not in seen_paths:
+            seen_paths.add(user_cfg_dir)
+            results.append({
+                "title": f"User Config Directory for '{tok}'",
+                "path": user_cfg_dir,
+                "exists": True,
+                "kind": "dir" if os.path.isdir(user_cfg_dir) else "config",
+                "inspect_cmd": f"ls -la ~/.config/{tok}",
+                "description": f"Discovered in local XDG config directory (`~/.config/{tok}`).",
+                "score": 4.2,
+            })
+
+        bin_path = shutil.which(tok)
+        if bin_path and bin_path not in seen_paths:
+            seen_paths.add(bin_path)
+            results.append({
+                "title": f"Executable Binary '{tok}'",
+                "path": bin_path,
+                "exists": True,
+                "kind": "binary",
+                "inspect_cmd": f"ls -la {bin_path}",
+                "description": f"Resolved on system `$PATH` (`{bin_path}`).",
+                "score": 3.5 if results else 5.0,
+            })
+
+    results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+    return results[:4]
+
+
+def run_where_command(args, opts=None):
+    """Handles `how where <query...>` / `om where <query...>` — <5ms spatial locator."""
+    import time
+    t0 = time.perf_counter()
+    opts = opts or {}
+    cfg = load_config()
+    verbosity = opts.get("verbosity") or cfg.get("verbosity", DEFAULT_VERBOSITY)
+
+    query = " ".join(args).strip()
+    if not query:
+        print(f"\n{YELLOW}! Please specify what config, file, log, binary, or port to locate.{RESET}")
+        print(f"{DIM}Examples:{RESET}")
+        print(f"  {CYAN}how where hyprland monitor config{RESET}")
+        print(f"  {CYAN}om where pacman log{RESET}")
+        print(f"  {CYAN}om -0 where waybar config{RESET}\n")
+        return
+
+    targets = locate_where_targets(query)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    if not targets:
+        if verbosity == "zero":
+            print("I don't know\n")
+        else:
+            print(f"\n{YELLOW}! No local path or standard config matched '{query}'.{RESET}\n")
+        return
+
+    top = targets[0]
+    if verbosity == "zero":
+        copy_to_clipboard(top["path"])
+        print(f"{top['path']}\n")
+        return
+
+    print(
+        f"\n{BOLD}{MAGENTA}◆ Spatial Locator (`where`){RESET} "
+        f"{DIM}— resolved in {elapsed_ms:.2f}ms (read-only){RESET}\n"
+    )
+    for idx, item in enumerate(targets, 1):
+        status_badge = (
+            f"{GREEN}✓ exists{RESET}"
+            if item.get("exists")
+            else f"{DIM}○ standard path{RESET}"
+        )
+        prefix = f"{BOLD}{GREEN}➜{RESET}" if idx == 1 else f"  {DIM}•{RESET}"
+        print(f"  {prefix} {BOLD}{item['title']}{RESET} [{status_badge}]")
+        print(f"    {BOLD}{CYAN}{item['path']}{RESET}")
+        print(f"    {DIM}{item['description']}{RESET}\n")
+
+    display_suggested_command(top["inspect_cmd"], query=f"where: {query}", is_cached=False)
+
+
+def get_shell_init_script(shell_name: str = "bash") -> str:
+    """
+    Golden Alternative (GA) Readline In-Place Prompt Injection (`Alt+H` / `\\eh`):
+    Returns a tiny shell keybinding script for `bash`, `zsh`, or `fish`.
+    Type `# kill process on port 3000` (or any query) in your prompt and press `Alt+H`
+    to replace the current command line buffer in-place with the exact command.
+    """
+    sh = (shell_name or "bash").lower().strip()
+    if sh == "zsh":
+        return """# how / om in-place readline prompt widget (Alt+H)
+_how_zle_widget() {
+  local q="${BUFFER#\\#}"
+  q="${q#"${q%%[![:space:]]*}"}"
+  [ -z "$q" ] && return 0
+  local out
+  out="$(how -0 "$q" 2>/dev/null | head -n 1)"
+  if [ -n "$out" ] && [ "$out" != "I don't know" ]; then
+    BUFFER="$out"
+    CURSOR=${#BUFFER}
+  fi
+  zle redisplay
+}
+zle -N _how_zle_widget
+bindkey '\\eh' _how_zle_widget
+"""
+    if sh == "fish":
+        return """# how / om in-place prompt widget (Alt+H)
+function _how_fish_widget
+  set -l q (string replace -r '^\\s*#?\\s*' '' -- (commandline -b))
+  test -z "$q"; and return
+  set -l out (how -0 "$q" 2>/dev/null | head -n 1)
+  if test -n "$out" -a "$out" != "I don't know"
+    commandline -r -- "$out"
+    commandline -f repaint
+  end
+end
+bind \\eh _how_fish_widget
+"""
+    return """# how / om in-place readline prompt widget (Alt+H)
+_how_readline_widget() {
+  local q="${READLINE_LINE#\\#}"
+  q="${q#"${q%%[![:space:]]*}"}"
+  [ -z "$q" ] && return 0
+  local out
+  out="$(how -0 "$q" 2>/dev/null | head -n 1)"
+  if [ -n "$out" ] && [ "$out" != "I don't know" ]; then
+    READLINE_LINE="$out"
+    READLINE_POINT=${#READLINE_LINE}
+  fi
+}
+bind -x '"\\eh": _how_readline_widget'
+"""
+
+
+def run_shell_init_command(args):
+    """Handles `how shell-init [bash|zsh|fish]` to print the Alt+H in-place readline widget."""
+    shell_name = args[0] if args else os.path.basename(os.environ.get("SHELL", "bash"))
+    if shell_name not in ("bash", "zsh", "fish"):
+        shell_name = "bash"
+    sys.stdout.write(get_shell_init_script(shell_name))
+
+
+def is_om_invocation() -> bool:
+    """Returns True if `how` was invoked via the unified `om` CLI binary/symlink."""
+    invoked = os.environ.get("HOW_INVOKED_AS") or os.path.basename(sys.argv[0] if sys.argv else "")
+    return invoked.lower() in ("om", "om.py")
+
+
+def dispatch_om_cli(args, opts):
+    """
+    Unified `om` CLI router (`om how ...`, `om where ...`, `om fix ...`, `om explain ...`, `om !`, or natural intent).
+    """
+    if not args:
+        print_help()
+        return True
+
+    first = args[0].lower()
+    rest = args[1:]
+
+    if first == "how":
+        if not rest:
+            print_help()
+            return True
+        if dispatch_subcommand(rest, opts):
+            return True
+        ask_groq(
+            " ".join(rest),
+            verbosity=opts.get("verbosity"),
+            no_cache=opts.get("no_cache", False),
+            custom_retention=opts.get("custom_retention"),
+            think_mode=opts.get("think_mode"),
+            no_context=opts.get("no_context", False),
+            force_context=opts.get("force_context", False),
+            context_mode_override=opts.get("context_mode_override"),
+            dry_run=opts.get("dry_run", False),
+            no_escalate=opts.get("no_escalate", False),
+            offline=opts.get("offline", False),
+            reflex_first=opts.get("reflex_first", False),
+        )
+        return True
+
+    if first in ("where", "locate"):
+        run_where_command(rest, opts)
+        return True
+
+    if first in ("reflex", "offline"):
+        run_offline_reflex(" ".join(rest), verbosity=opts.get("verbosity"))
+        return True
+
+    if first in ("!", "run") and len(args) == 1:
+        run_last_command(auto_yes=opts.get("feedback_yes", False), dry_run=opts.get("dry_run", False))
+        return True
+
+    if first in ("fix", "repair", "diagnose"):
+        run_fix_command(rest, opts)
+        return True
+
+    if first in ("explain", "anatomy", "dissect"):
+        run_explain_command(rest)
+        return True
+
+    if first in ("shell-init", "init-shell"):
+        run_shell_init_command(rest)
+        return True
+
+    if dispatch_subcommand(args, opts):
+        return True
+
+    full_q = " ".join(args)
+    intent = classify_query_intent(full_q)
+    if intent == "where":
+        run_where_command(args, opts)
+        return True
+    if intent == "fix":
+        run_fix_command(args, opts)
+        return True
+    if intent == "explain":
+        run_explain_command(args)
+        return True
+
+    ask_groq(
+        full_q,
+        verbosity=opts.get("verbosity"),
+        no_cache=opts.get("no_cache", False),
+        custom_retention=opts.get("custom_retention"),
+        think_mode=opts.get("think_mode"),
+        no_context=opts.get("no_context", False),
+        force_context=opts.get("force_context", False),
+        context_mode_override=opts.get("context_mode_override"),
+        dry_run=opts.get("dry_run", False),
+        no_escalate=opts.get("no_escalate", False),
+        offline=opts.get("offline", False),
+        reflex_first=opts.get("reflex_first", False),
+    )
+    return True
+
+
+# -----------------------------------------------------------------------------
+# Main Query Execution (Reflex -> Cache -> Triage -> Fast Groq / Pre-IDK / Deep)
 # -----------------------------------------------------------------------------
 
 def ask_groq(
@@ -3170,6 +5247,8 @@ def ask_groq(
     context_mode_override=None,
     dry_run=False,
     no_escalate=False,
+    offline=False,
+    reflex_first=False,
 ):
     import hashlib
     import json
@@ -3187,6 +5266,15 @@ def ask_groq(
     if verbosity not in ("zero", "low", "normal"):
         verbosity = "normal"
 
+    is_offline = (
+        offline
+        or os.environ.get("HOW_OFFLINE") in ("1", "true", "yes")
+        or bool(cfg.get("offline", False))
+    )
+    if is_offline:
+        run_offline_reflex(raw_query, verbosity=verbosity)
+        return
+
     if dry_run:
         print_context_dry_run_plan(query=raw_query)
         t_res = triage_query_with_groq(raw_query, env_context="", api_key=None, cfg=cfg)
@@ -3194,6 +5282,16 @@ def ask_groq(
         badge = f"{MAGENTA}{BOLD}DEEP THINKING{RESET}" if route == "deep" else f"{GREEN}{BOLD}FAST DIRECT{RESET}"
         print(f"  {BOLD}[Triage Preview]{RESET} Route: {badge} {DIM}({t_res.get('reason', '-')}, model: {model}){RESET}\n")
         return
+
+    use_reflex_first = (
+        reflex_first
+        or os.environ.get("HOW_REFLEX") in ("1", "true", "yes")
+        or bool(cfg.get("reflex_first", False))
+    )
+    if use_reflex_first and think_mode != "deep":
+        if lookup_system1_reflex(raw_query) is not None:
+            run_offline_reflex(raw_query, verbosity=verbosity)
+            return
 
     env_context, _, os_prof, stack_info = get_active_environment_context(
         cfg,
@@ -3220,10 +5318,43 @@ def ask_groq(
             return_hits=True,
         )
         if cached:
-            cached_text, cached_at, hit_count = cached
+            cached_text, cached_at, hit_count, seconds_since_prev = cached
             cached_text = strip_control_sequences(cached_text)
             age_sec = max(0, int(time.time() - cached_at))
             age_str = format_retention_short(age_sec) + " ago" if age_sec > 0 else "just now"
+
+            # Interactive Repeat-Question Memory (roadmap): offer deep/fix when re-asked soon
+            if verbosity == "normal":
+                repeat_choice = prompt_repeat_question_memory(
+                    raw_query, hit_count, seconds_since_prev
+                )
+                if repeat_choice == "y":
+                    print(
+                        f"  {MAGENTA}↻ Fresh Deep Thinking{RESET} "
+                        f"{DIM}(bypassing cache for this ask){RESET}\n"
+                    )
+                    return ask_groq(
+                        raw_query,
+                        verbosity=verbosity,
+                        no_cache=True,
+                        custom_retention=custom_retention,
+                        think_mode="deep",
+                        no_context=no_context,
+                        force_context=force_context,
+                        context_mode_override=context_mode_override,
+                        dry_run=False,
+                        no_escalate=no_escalate,
+                    )
+                if repeat_choice == "e":
+                    print(f"  {CYAN}→{RESET} Opening local repair flow ({CYAN}how fix{RESET})...\n")
+                    return run_fix_command([], {
+                        "verbosity": verbosity,
+                        "no_cache": True,
+                        "think_mode": "deep",
+                        "no_context": no_context,
+                        "force_context": force_context,
+                        "context_mode_override": context_mode_override,
+                    })
 
             if verbosity != "zero":
                 v_info = f", {verbosity}" if verbosity != "normal" else ""
@@ -3249,10 +5380,6 @@ def ask_groq(
     import urllib.error
     import urllib.request
 
-    api_key = require_api_key(message="! Groq API key required.")
-    if not api_key:
-        return
-
     docs_context, docs_read = get_system_docs_context(raw_query, return_sources=True)
     full_receipt = format_context_read_receipt(os_prof=os_prof, stack_info=stack_info, docs_read=docs_read)
     optimized_prompt = format_query(raw_query)
@@ -3260,6 +5387,46 @@ def ask_groq(
         optimized_prompt += f"\n\nEnvironment & Project Stack:\n{env_context}"
     if docs_context:
         optimized_prompt += f"\n\nContext from local system documentation:\n{docs_context}"
+
+    # Golden Alternative (GA) Zero-Setup Cascade when no Groq API key is configured:
+    # 1. Layer 1: Tier-0 Local Cascade (Episodic History + System-1 Reflex + Slot Filling + Local tldr/omarchy-*)
+    # 2. Layer 2: Zero-Setup Cloud Auto-Discovery (GitHub Models via `gh` token, Cerebras, Gemini + Search, OpenRouter)
+    if not get_api_key():
+        if lookup_system1_reflex(raw_query) is not None:
+            run_offline_reflex(raw_query, verbosity=verbosity)
+            return
+        zs_prov = discover_zero_setup_provider(cfg, include_groq=False)
+        if zs_prov:
+            if verbosity != "zero":
+                v_info = f", {verbosity}" if verbosity != "normal" else ""
+                print(
+                    f"\n{CYAN}{BOLD}how ❯{RESET} {GREEN}[zero-setup: {zs_prov['label']}]{RESET} "
+                    f"{DIM}(via {zs_prov['source']}{v_info}){RESET}"
+                )
+                if is_yolo or env_context or docs_read:
+                    print(f"  {CYAN}🔎 Read:{RESET} {DIM}{full_receipt}{RESET}")
+                print()
+            zs_text = query_zero_setup_provider(
+                zs_prov,
+                sys_prompt,
+                optimized_prompt,
+                enable_search=(zs_prov.get("provider") == "gemini"),
+            )
+            if zs_text:
+                if verbosity != "zero":
+                    print(zs_text + f"{RESET}\n")
+                if not bypass_cache and not is_uncertain_response(zs_text):
+                    save_cached_response(
+                        raw_query, cache_model_key, verbosity, zs_text, retention_sec,
+                        prompt_hash=prompt_hash, docs_hash=docs_hash,
+                    )
+                cmd = extract_executable_command(zs_text)
+                emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=False, raw_text=zs_text)
+                return
+
+    api_key = require_api_key(message="! Groq API key required.")
+    if not api_key:
+        return
 
     # Determine Fast vs Deep Thinking route via explicit flag or Groq Triage
     use_deep = False
@@ -3421,6 +5588,9 @@ def ask_groq(
                     pass
 
             if e.code == 429:
+                if lookup_system1_reflex(raw_query) is not None:
+                    run_offline_reflex(raw_query, verbosity=verbosity)
+                    return
                 print(f"\n{YELLOW}⚡ Groq API rate limit reached (429 Rate Limit). Try again in a moment.{RESET}\n")
                 return
             if e.code in (404, 503):
@@ -3431,6 +5601,9 @@ def ask_groq(
                     print(f"{CYAN}➜ Automatic fallback to model: '{next_model}'...{RESET}\n")
                     current_model = next_model
                     continue
+                if lookup_system1_reflex(raw_query) is not None:
+                    run_offline_reflex(raw_query, verbosity=verbosity)
+                    return
                 print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
                 return
             print(f"\n{RED}✗ Groq API error ({e.code}): {msg}{RESET}\n")
@@ -3439,6 +5612,9 @@ def ask_groq(
             print(f"\n{YELLOW}Interrupted by user.{RESET}\n")
             return
         except Exception as e:
+            if lookup_system1_reflex(raw_query) is not None:
+                run_offline_reflex(raw_query, verbosity=verbosity)
+                return
             print(f"\n{RED}✗ Connection error: {e}{RESET}\n")
             return
 
@@ -3452,7 +5628,18 @@ def show_unified_status():
     import shutil
     cfg = load_config()
     key = get_api_key()
-    auth_badge = f"{GREEN}authenticated{RESET}" if key else f"{YELLOW}not logged in (`how auth login`){RESET}"
+    zs_prov = discover_zero_setup_provider(cfg, include_groq=False) if not key else None
+    if key:
+        auth_badge = f"{GREEN}authenticated (Groq API){RESET}"
+    elif zs_prov:
+        auth_badge = (
+            f"{GREEN}zero-setup active ({zs_prov['label']} via {zs_prov['source']} + System-1 Reflex){RESET}"
+        )
+    else:
+        auth_badge = (
+            f"{GREEN}zero-setup offline reflex active{RESET} "
+            f"{DIM}(optional cloud login: `how auth login`){RESET}"
+        )
 
     fast_model = cfg.get("model", DEFAULT_MODEL)
     prov, deep_model, _ = resolve_deep_provider(cfg)
@@ -3512,18 +5699,37 @@ def run_last_command(auto_yes=False, dry_run=False):
     if dry_run:
         return
 
+    is_destructive = safety.get("level") == "destructive"
+
     if not auto_yes:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             print(f"{YELLOW}! Non-interactive shell: showing dry-run only (pass -y to execute).{RESET}\n")
             return
         try:
-            ans = input(f"  {CYAN}Execute this command now? [y/N]:{RESET} ").strip().lower()
+            if is_destructive:
+                print(
+                    f"  {RED}{BOLD}Warning:{RESET} this command is marked "
+                    f"{RED}🔴 DESTRUCTIVE / ADMIN{RESET} {DIM}({safety.get('reason', '')}){RESET}."
+                )
+                ans = input(
+                    f"  {CYAN}Type {BOLD}yes{RESET}{CYAN} to execute, or anything else to cancel:{RESET} "
+                ).strip().lower()
+                if ans != "yes":
+                    print(f"  {DIM}Cancelled (destructive commands require typing 'yes').{RESET}\n")
+                    return
+            else:
+                ans = input(f"  {CYAN}Execute this command now? [y/N]:{RESET} ").strip().lower()
+                if ans not in ("y", "yes"):
+                    print(f"  {DIM}Cancelled.{RESET}\n")
+                    return
         except (KeyboardInterrupt, EOFError):
             print()
             return
-        if ans not in ("y", "yes"):
-            print(f"  {DIM}Cancelled.{RESET}\n")
-            return
+    elif is_destructive:
+        print(
+            f"  {YELLOW}! Executing destructive command with -y / --yes "
+            f"(no interactive confirmation).{RESET}\n"
+        )
 
     import subprocess
     log_command_proposal(last_query, last_cmd, executed=True)
@@ -3765,20 +5971,22 @@ def parse_cli_args(raw_args):
     context_mode_override = None
     dry_run = False
     no_escalate = False
+    offline = False
+    reflex_first = False
     args = []
 
     if len(raw_args) == 1 and raw_args[0] in ("--version", "-V", "version"):
         return {"version_requested": True}, []
 
     is_feedback_context = False
-    for a in raw_args:
-        if a.lower() in ("--feedback", "--bug", "--issue", "--report"):
-            is_feedback_context = True
-            break
-        if not a.startswith("-"):
-            if a.lower() in ("feedback", "bug", "report", "issue", "run", "!"):
-                is_feedback_context = True
-            break
+    non_flags = [a.lower() for a in raw_args if not a.startswith("-")]
+    if any(a.lower() in ("--feedback", "--bug", "--issue", "--report") for a in raw_args):
+        is_feedback_context = True
+    elif non_flags and (
+        non_flags[0] in ("feedback", "bug", "report", "issue", "run", "!")
+        or (len(non_flags) >= 2 and non_flags[0] == "om" and non_flags[1] in ("run", "!", "feedback"))
+    ):
+        is_feedback_context = True
 
     i = 0
     while i < len(raw_args):
@@ -3804,6 +6012,12 @@ def parse_cli_args(raw_args):
             i += 1
         elif a_lower == "--fast":
             think_mode = "fast"
+            i += 1
+        elif a_lower in ("--offline", "--local"):
+            offline = True
+            i += 1
+        elif a_lower in ("--reflex", "--system1"):
+            reflex_first = True
             i += 1
         elif a_lower == "--no-context":
             no_context = True
@@ -3884,6 +6098,8 @@ def parse_cli_args(raw_args):
         "context_mode_override": context_mode_override,
         "dry_run": dry_run,
         "no_escalate": no_escalate,
+        "offline": offline,
+        "reflex_first": reflex_first,
     }
     return opts, args
 
@@ -3905,12 +6121,27 @@ def dispatch_subcommand(args, opts):
         show_unified_status()
         return True
 
+    if first == "om":
+        return dispatch_om_cli(args[1:], opts)
+
+    if first in ("where", "locate"):
+        run_where_command(args[1:], opts)
+        return True
+
+    if first in ("reflex", "offline"):
+        run_offline_reflex(" ".join(args[1:]), verbosity=opts.get("verbosity"))
+        return True
+
     if first in ("run", "!") and len(args) == 1:
         run_last_command(auto_yes=opts.get("feedback_yes", False), dry_run=opts.get("dry_run", False))
         return True
 
     if first in ("explain", "anatomy", "dissect"):
         run_explain_command(args[1:])
+        return True
+
+    if first in ("shell-init", "init-shell"):
+        run_shell_init_command(args[1:])
         return True
 
     if first in ("fix", "repair", "diagnose"):
@@ -4034,7 +6265,7 @@ def dispatch_subcommand(args, opts):
                 else:
                     prov, mod, _ = resolve_deep_provider(cfg)
                     print(f"\n{BOLD}Active Deep Thinking Model:{RESET} {CYAN}{prov}:{mod}{RESET}")
-                    print(f"{DIM}Set custom model via: {CYAN}how model think <provider:model>{RESET} (e.g. groq:deepseek-r1-distill-llama-70b, gemini:gemini-2.5-pro, anthropic:claude-3-7-sonnet-latest, cli:claude)\n")
+                    print(f"{DIM}Set custom model via: {CYAN}how model think <provider:model>{RESET} (e.g. groq:openai/gpt-oss-120b, gemini:gemini-2.5-pro, anthropic:claude-3-7-sonnet-latest, cli:claude)\n")
                 return True
             if len(args) == 2 and (sub.isdigit() or "/" in sub):
                 select_model_interactive(args[1])
@@ -4068,6 +6299,10 @@ def main():
         print_help()
         sys.exit(0)
 
+    if is_om_invocation():
+        dispatch_om_cli(args, opts)
+        sys.exit(0)
+
     if dispatch_subcommand(args, opts):
         sys.exit(0)
 
@@ -4083,6 +6318,8 @@ def main():
         context_mode_override=opts.get("context_mode_override"),
         dry_run=opts.get("dry_run", False),
         no_escalate=opts.get("no_escalate", False),
+        offline=opts.get("offline", False),
+        reflex_first=opts.get("reflex_first", False),
     )
 
 

@@ -416,6 +416,24 @@ class TestSafetyAndSandbox(unittest.TestCase):
             log_text = f.read()
         self.assertIn("[EXECUTED]", log_text)
 
+        # 6. Destructive commands require typing the full word 'yes' (not just 'y')
+        self.how.log_command_proposal("wipe tmp", "rm -rf /tmp/how-demo-build", executed=False)
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            with patch("builtins.input", return_value="y"):
+                self.how.run_last_command(auto_yes=False, dry_run=False)
+        with open(self.how.COMMANDS_LOG, encoding="utf-8") as f:
+            after_reject = f.read()
+        # Still only the earlier safe EXECUTED; destructive reject must not add another
+        self.assertEqual(after_reject.count("[EXECUTED]"), 1)
+
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            with patch("builtins.input", return_value="yes"):
+                with patch("subprocess.run", return_value=type("R", (), {"returncode": 0})()) as mock_run:
+                    with self.assertRaises(SystemExit) as cm2:
+                        self.how.run_last_command(auto_yes=False, dry_run=False)
+                    self.assertEqual(cm2.exception.code, 0)
+                    mock_run.assert_called_once()
+
     def test_rust_transpiler_binary_parity_and_safety(self):
         """Rust transpiler refuses source overwrite and produces an ELF binary with full CLI parity."""
         transpiler_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "transpile_rust.py"))
@@ -697,12 +715,243 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertTrue(diag_lock["matched"])
         self.assertIn("/var/lib/pacman/db.lck", diag_lock["fixed_command"])
 
-        # 4. Repeat-query cache hit_count tracking
+        # 4. Repeat-query cache hit_count + last_hit_at tracking
         self.how.save_cached_response("to list ports", "test-model", "normal", "```bash\nss -tulpn\n```", 3600)
         h1 = self.how.get_cached_response("to list ports", "test-model", "normal", 3600, return_hits=True)
         h2 = self.how.get_cached_response("to list ports", "test-model", "normal", 3600, return_hits=True)
         self.assertEqual(h1[2], 2)
         self.assertEqual(h2[2], 3)
+        self.assertEqual(len(h1), 4, "return_hits must include seconds_since_previous_hit")
+        self.assertIsInstance(h1[3], int)
+        self.assertGreaterEqual(h1[3], 0)
+        self.assertLessEqual(h2[3], 5, "back-to-back hits should be near 0s apart")
+
+        # 5. Interactive Repeat-Question Memory prompt choices
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            self.assertEqual(
+                self.how.prompt_repeat_question_memory("to list ports", 2, 120, input_fn=lambda _: "y"),
+                "y",
+            )
+            self.assertEqual(
+                self.how.prompt_repeat_question_memory("to list ports", 2, 120, input_fn=lambda _: "e"),
+                "e",
+            )
+            self.assertEqual(
+                self.how.prompt_repeat_question_memory("to list ports", 2, 120, input_fn=lambda _: "n"),
+                "n",
+            )
+            # Outside 30-minute window → always show cache
+            self.assertEqual(
+                self.how.prompt_repeat_question_memory("to list ports", 2, 31 * 60, input_fn=lambda _: "y"),
+                "n",
+            )
+
+        # 6. Current default Groq models must not use shut-down IDs
+        deprecated = {
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "deepseek-r1-distill-llama-70b",
+            "qwen-qwq-32b",
+        }
+        self.assertNotIn(self.how.DEFAULT_TRIAGE_MODEL, deprecated)
+        self.assertNotIn(self.how.DEFAULT_THINK_MODEL, deprecated)
+        self.assertTrue(self.how.DEFAULT_TRIAGE_MODEL.startswith("openai/") or "/" in self.how.DEFAULT_TRIAGE_MODEL)
+
+    def test_system1_offline_reflex_engine_and_intent_classifier(self):
+        """Tier-0 System-1 offline reflex resolves common Linux/Omarchy queries in <3ms with zero network calls."""
+        import io
+        import time
+
+        # 1. Intent classification (<0.1ms)
+        self.assertEqual(self.how.classify_query_intent("where is hyprland monitor config"), "where")
+        self.assertEqual(self.how.classify_query_intent("fix permission denied"), "fix")
+        self.assertEqual(self.how.classify_query_intent("explain tar -xzvf archive.tar.gz"), "explain")
+        self.assertEqual(self.how.classify_query_intent("to check memory usage"), "how")
+
+        # 2. Sub-3ms lookup latency and accuracy across categories
+        t0 = time.perf_counter()
+        r_mem = self.how.lookup_system1_reflex("to check memory usage")
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self.assertLess(elapsed_ms, 5.0, f"System-1 reflex took {elapsed_ms:.2f}ms (expected <5ms)")
+        self.assertIsNotNone(r_mem)
+        self.assertEqual(r_mem["command"], "free -h")
+        self.assertEqual(r_mem["safety"]["level"], "safe")
+
+        r_origin = self.how.lookup_system1_reflex("to see orign")
+        self.assertIsNotNone(r_origin)
+        self.assertIn("git remote", r_origin["command"])
+
+        r_hypr = self.how.lookup_system1_reflex("to reload Hyprland config without logout?")
+        self.assertIsNotNone(r_hypr)
+        self.assertEqual(r_hypr["command"], "hyprctl reload")
+
+        r_limine = self.how.lookup_system1_reflex("to enroll Limine config before sbctl secure boot?")
+        self.assertIsNotNone(r_limine)
+        self.assertIn("limine enroll-config", r_limine["command"])
+
+        # Fictional / nonsensical query must return None (honest 'I don't know')
+        self.assertIsNone(self.how.lookup_system1_reflex("to calibrate fictional hyperdrive in zorgos"))
+
+        # 3. `--offline` and `how reflex` execute with zero network calls
+        with patch("urllib.request.urlopen", side_effect=AssertionError("Network forbidden in --offline")):
+            buf_zero = io.StringIO()
+            with patch("sys.stdout", buf_zero):
+                self.how.ask_groq("to show kernel version", verbosity="zero", offline=True)
+            self.assertIn("uname -r", buf_zero.getvalue())
+
+            buf_idk = io.StringIO()
+            with patch("sys.stdout", buf_idk):
+                self.how.ask_groq("to calibrate fictional hyperdrive in zorgos", verbosity="zero", offline=True)
+            self.assertEqual(buf_idk.getvalue().strip(), "I don't know")
+
+        # 4. Golden Alternative (GA): Dynamic slot filling, episodic memory, zero-setup cloud & readline widget
+        r_port = self.how.lookup_system1_reflex("how to kill process listening on port 3000")
+        self.assertIsNotNone(r_port)
+        self.assertIn("3000/tcp", r_port["command"])
+
+        r_pid = self.how.lookup_system1_reflex("to show open files for pid 4242 with lsof")
+        self.assertIsNotNone(r_pid)
+        self.assertEqual(r_pid["command"], "lsof -p 4242")
+
+        r_tmux = self.how.lookup_system1_reflex("to create a new tmux session named dev")
+        self.assertIsNotNone(r_tmux)
+        self.assertEqual(r_tmux["command"], "tmux new -s dev")
+
+        # Episodic history recall from [EXECUTED] commands.log
+        self.how.log_command_proposal("deploy staging cluster", "kubectl apply -f k8s/staging.yaml", executed=True)
+        r_ep = self.how.lookup_system1_reflex("how to deploy staging cluster")
+        self.assertIsNotNone(r_ep)
+        self.assertEqual(r_ep["command"], "kubectl apply -f k8s/staging.yaml")
+        self.assertEqual(r_ep["source"], "system1:episodic-history")
+
+        # Zero-setup cloud provider discovery (Cerebras / GitHub Models)
+        with patch.dict(os.environ, {"CEREBRAS_API_KEY": "csk_test_123"}, clear=False):
+            zs_c = self.how.discover_zero_setup_provider({}, include_groq=False, allow_gh_cli=False)
+            self.assertIsNotNone(zs_c)
+            self.assertEqual(zs_c["provider"], "cerebras")
+
+        with patch.dict(os.environ, {"CEREBRAS_API_KEY": "", "GEMINI_API_KEY": "", "GITHUB_TOKEN": "ghu_test_123"}, clear=False):
+            zs_gh = self.how.discover_zero_setup_provider({}, include_groq=False, allow_gh_cli=False)
+            self.assertIsNotNone(zs_gh)
+            self.assertEqual(zs_gh["provider"], "github")
+
+        # Shell readline in-place widget scripts (Alt+H)
+        self.assertIn("READLINE_LINE", self.how.get_shell_init_script("bash"))
+        self.assertIn("zle -N", self.how.get_shell_init_script("zsh"))
+        self.assertIn("commandline -r", self.how.get_shell_init_script("fish"))
+
+    def test_where_spatial_locator_and_unified_om_cli(self):
+        """`how where` and unified `om` CLI route spatial, procedural, and repair commands accurately."""
+        import io
+
+        # 1. `locate_where_targets` resolves Hyprland, Omarchy, Pacman, and Port targets
+        t_mon = self.how.locate_where_targets("where is hyprland monitor config")
+        self.assertGreaterEqual(len(t_mon), 1)
+        self.assertTrue(t_mon[0]["path"].endswith(".config/hypr/monitors.conf"))
+
+        t_pac = self.how.locate_where_targets("pacman.conf")
+        self.assertGreaterEqual(len(t_pac), 1)
+        self.assertEqual(t_pac[0]["path"], "/etc/pacman.conf")
+
+        t_port = self.how.locate_where_targets("where is port 8080")
+        self.assertGreaterEqual(len(t_port), 1)
+        self.assertIn("8080", t_port[0]["inspect_cmd"])
+
+        # 2. `run_where_command` in zero and normal verbosity
+        buf_w0 = io.StringIO()
+        with patch("sys.stdout", buf_w0):
+            self.how.run_where_command(["hyprland", "monitor", "config"], {"verbosity": "zero"})
+        self.assertTrue(buf_w0.getvalue().strip().endswith(".config/hypr/monitors.conf"))
+
+        buf_wn = io.StringIO()
+        with patch("sys.stdout", buf_wn):
+            self.how.run_where_command(["pacman", "log"], {"verbosity": "normal"})
+        self.assertIn("/var/log/pacman.log", buf_wn.getvalue())
+        self.assertIn("SAFE", buf_wn.getvalue())
+
+        # 3. Unified `om` CLI routing (`om where`, `om how --offline`, `om fix`, `om <natural where query>`)
+        buf_om_w = io.StringIO()
+        with patch("sys.stdout", buf_om_w):
+            self.how.dispatch_om_cli(["where", "waybar", "config"], {"verbosity": "zero"})
+        self.assertTrue(buf_om_w.getvalue().strip().endswith(".config/waybar/config.jsonc"))
+
+        buf_om_nat = io.StringIO()
+        with patch("sys.stdout", buf_om_nat):
+            self.how.dispatch_om_cli(["where", "is", "hyprland", "bindings"], {"verbosity": "zero"})
+        self.assertTrue(buf_om_nat.getvalue().strip().endswith(".config/hypr/bindings.conf"))
+
+        buf_om_how = io.StringIO()
+        with patch("sys.stdout", buf_om_how):
+            self.how.dispatch_om_cli(
+                ["how", "to", "check", "memory", "usage"],
+                {"verbosity": "zero", "offline": True},
+            )
+        self.assertIn("free -h", buf_om_how.getvalue())
+
+        # 4. Repo root `om` symlink exists and works
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        om_path = os.path.join(repo_root, "om")
+        self.assertTrue(os.path.exists(om_path), "Expected `om` entrypoint in repo root")
+        proc_om = subprocess.run(
+            [sys.executable, om_path, "-0", "where", "pacman", "conf"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOW_INVOKED_AS": "om", "NO_COLOR": "1"},
+        )
+        self.assertEqual(proc_om.returncode, 0)
+        self.assertEqual(proc_om.stdout.strip(), "/etc/pacman.conf")
+
+    def test_closed_loop_asi_search_replace_and_gate_rollback(self):
+        """scripts/ai_architect_review.py applies valid SEARCH/REPLACE blocks and rolls back on gate failure."""
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        asi_path = os.path.join(repo_root, "scripts", "ai_architect_review.py")
+        loader = importlib.machinery.SourceFileLoader("asi_review_mod", asi_path)
+        spec = importlib.util.spec_from_loader("asi_review_mod", loader)
+        asi_mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(asi_mod)
+
+        # 1. Valid SEARCH/REPLACE application
+        src = "def greet():\n    return 'hello'\n"
+        proposal = "<<<< SEARCH\n    return 'hello'\n====\n    return 'world'\n>>>> REPLACE"
+        updated = asi_mod.apply_search_replace_blocks(src, proposal)
+        self.assertEqual(updated, "def greet():\n    return 'world'\n")
+
+        # 2. Rejects proposals containing eval() or exec()
+        bad_proposal = "<<<< SEARCH\n    return 'hello'\n====\n    return eval('1+1')\n>>>> REPLACE"
+        self.assertEqual(asi_mod.apply_search_replace_blocks(src, bad_proposal), src)
+
+        # 3. Automatic rollback when verification gate fails
+        tmp_dir = tempfile.mkdtemp(prefix="how_asi_rollback_")
+        try:
+            target_file = os.path.join(tmp_dir, "dummy_how.py")
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write(src)
+
+            res_fail = asi_mod.apply_proposal_with_gate_rollback(
+                target_file,
+                proposal,
+                repo_root=tmp_dir,
+                gate_runner=lambda _r: {"all_passed": False, "gates": {}},
+            )
+            self.assertTrue(res_fail["applied"])
+            self.assertFalse(res_fail["passed"])
+            self.assertTrue(res_fail["rolled_back"])
+            with open(target_file, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), src, "File must be rolled back to exact original text on gate failure")
+
+            res_pass = asi_mod.apply_proposal_with_gate_rollback(
+                target_file,
+                proposal,
+                repo_root=tmp_dir,
+                gate_runner=lambda _r: {"all_passed": True, "gates": {"vv_suite": {"passed": True}}},
+            )
+            self.assertTrue(res_pass["applied"])
+            self.assertTrue(res_pass["passed"])
+            self.assertFalse(res_pass["rolled_back"])
+            with open(target_file, "r", encoding="utf-8") as f:
+                self.assertIn("return 'world'", f.read())
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_static_code_quality_and_bandit_invariants(self):
         """AST & static check across all repo Python files for syntax, single imports, and zero eval/exec."""

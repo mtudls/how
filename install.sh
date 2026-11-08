@@ -103,15 +103,17 @@ else
   chmod +x "$TARGET"
 fi
 
-# 4. Verify installation
+# 4. Verify installation & create unified `om` CLI symlink
 if ! "$TARGET" --help >/dev/null 2>&1; then
   abort "Installation verification failed ($TARGET --help failed)."
 fi
 
+ln -sf "$TARGET" "$BIN_DIR/om"
+
 if [ "$RUST_TRANSPILED" = "1" ]; then
-  success "Installed how (native Rust transpiled binary) to $TARGET (Python source kept readable at $SCRIPT_DIR/how)"
+  success "Installed how & om (native Rust transpiled binary) to $TARGET (Python source kept readable at $SCRIPT_DIR/how)"
 else
-  success "Installed how to $TARGET"
+  success "Installed how & om to $TARGET"
 fi
 
 # 5. Check PATH
