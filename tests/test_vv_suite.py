@@ -467,7 +467,7 @@ def test_product_convergence_and_wow_ux():
     print("  ✓ Pre-IDK question refinement, domain grounding & repeat-query memory verified.")
     scores.append(100)
 
-    # 4.5 Tier-0 System-1 Offline Reflex (<3ms) & Spatial Locator (`where` + `om`)
+    # 4.5 Tier-0 System-1 Offline Reflex (<3ms) & Spatial Locator (`how where`)
     t0_ref = time.perf_counter()
     r_ref = how.lookup_system1_reflex("to check memory usage")
     ref_ms = (time.perf_counter() - t0_ref) * 1000
@@ -478,7 +478,7 @@ def test_product_convergence_and_wow_ux():
 
     w_targets = how.locate_where_targets("where is hyprland monitor config")
     assert w_targets and w_targets[0]["path"].endswith(".config/hypr/monitors.conf")
-    print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms) & `where`/`om` spatial locator verified.")
+    print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms) & `how where` spatial locator verified.")
     scores.append(100)
 
     avg_score = sum(scores) / len(scores)

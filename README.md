@@ -6,23 +6,23 @@ Built for **Omarchy**, **Linux**, and your local project stack.
 
 > **Document Guide:**
 > - **Part 1 — `[LIVE • v0.6]`**: Everyday commands and core features you can use right now (`✅`).
-> - **Part 2 — `[LIVE • v0.6]`**: System-1 Offline Reflex, Repeat-Question Memory, `where` + `om` Unified CLI, Traffic-Light Safety, and Closed-Loop ASI (`✅`).
+> - **Part 2 — `[LIVE • v0.6]`**: System-1 Offline Reflex, Repeat-Question Memory, `how where` Spatial Locator, Traffic-Light Safety, and Closed-Loop ASI (`✅`).
 > - *Technical details (**way / form**) are inside expandable `▸` sections.*
 
 ---
 
-# Part 1 — `[LIVE • v0.6]` What `how` & `om` Do Today
+# Part 1 — `[LIVE • v0.6]` What `how` Does Today
 
 ## Quick Start (Zero-Setup Out of the Box)
 
 ```bash
 git clone https://github.com/mdsyseng/how.git && cd how
-./install.sh                    # Installs native Rust `how` & `om` — works immediately with 0 setup!
+./install.sh                    # Installs native Rust `how` — works immediately with 0 setup!
 eval "$(how shell-init bash)"   # Optional: bind Alt+H to replace `# query` in-place in your shell prompt
 how auth login                  # Optional: add free Groq LPU key ($0, no card): console.groq.com/keys
 ```
 
-> **Zero-Setup Cascade (`v0.6`):** Even before you run `how auth login`, `how` and `om` work immediately out of the box using:
+> **Zero-Setup Cascade (`v0.6`):** Even before you run `how auth login`, `how` works immediately out of the box using:
 > 1. **Layer 1 (`<1 ms` Offline):** Personal episodic history (`commands.log`) + System-1 Reflex KB with dynamic parameter slot filling (`<port>`, `<PID>`, `<size>`, `<service>`) + local `# omarchy:*` & `tldr` recipe extraction.
 > 2. **Layer 2 (`Zero-Key Cloud Auto-Discovery`):** Automatically reuses your existing `gh` CLI login (`~/.config/gh/hosts.yml` / `gh auth token` → GitHub Models), `CEREBRAS_API_KEY` (Cerebras WSE), or `GEMINI_API_KEY` (Gemini Flash-Lite + Google Search Grounding) if present.
 > 3. **Layer 3 (`Alt+H` Readline Prompt Injection):** Type `# kill process on port 3000` in your prompt and press **`Alt+H`** to replace the prompt buffer in-place.
@@ -35,10 +35,10 @@ how auth login                  # Optional: add free Groq LPU key ($0, no card):
 | ✅ `LIVE` | **Command only (no extra text)** | `how -0 to find largest files` |
 | ✅ `LIVE` | **In-place shell prompt replacement (`Alt+H` keybinding)** | `eval "$(how shell-init bash)"` *(then type `# query` + `Alt+H`)* |
 | ✅ `LIVE` | **Offline `<3 ms` System-1 reflex (zero network)** | `how --offline to check memory usage` *(or `how reflex ...`)* |
-| ✅ `LIVE` | **Offline `<5 ms` spatial locator for configs, logs & ports** | `how where hyprland monitor config` *(or `om where ...`)* |
+| ✅ `LIVE` | **Offline `<5 ms` spatial locator for configs, logs & ports** | `how where hyprland monitor config` *(or `how -0 where pacman.conf`)* |
 | ✅ `LIVE` | **Offline `<1 ms` visual pipeline & flag breakdown** | `how explain` *(or `how explain "tar -xzvf a.tgz"`)* |
-| ✅ `LIVE` | **Instant command repair & error diagnostics** | `how fix` *(or `om fix "permission denied"`)* |
-| ✅ `LIVE` | **Run the last suggested command (with safety check)** | `how run` *(or `om !`)* |
+| ✅ `LIVE` | **Instant command repair & error diagnostics** | `how fix` *(or `how fix "permission denied"`)* |
+| ✅ `LIVE` | **Run the last suggested command (with safety check)** | `how run` *(or `how !`)* |
 | ✅ `LIVE` | **Solve a hard bug or boot issue** | `how -t why does suspend freeze my screen` |
 | ✅ `LIVE` | **Preview what `how` would read (zero execution)** | `how --dry-run to update system` |
 | ✅ `LIVE` | **Auto-read OS & project stack (with receipt)** | `how --yolo to run single test file` |
@@ -160,13 +160,13 @@ how test [--stats]                # Run self-test and speed benchmark
 ---
 ---
 
-# Part 2 — `[LIVE • v0.6]` System-1 Reflex, `where` + `om` CLI & Closed-Loop ASI
+# Part 2 — `[LIVE • v0.6]` System-1 Reflex, `how where` Locator & Closed-Loop ASI
 
 | Status | Capability | Effect (What it does for you) |
 | :---: | :--- | :--- |
 | ✅ `LIVE` | **1. System-1 Offline Reflex (`basal` / `jev`)** | Answers everyday Linux/Omarchy commands in `<3 ms` offline (`how --offline` / `how reflex` / `--reflex`). |
 | ✅ `LIVE` | **2. Repeat-Question Memory** | Detects when you ask the same question twice and asks if the previous command failed (`[Y]`/`[e]`/`[n]` in TTY, 30m window). |
-| ✅ `LIVE` | **3. `where` + `om` Unified CLI** | Finds *where* any file, config, log, binary, or port is (`om where ...` / `how where ...`) alongside `om how`, `om fix`, and `om !`. |
+| ✅ `LIVE` | **3. `how where` Spatial Locator & Multi-Intent Routing** | Finds *where* any file, config, log, binary, or port is (`how where ...`) alongside `how fix`, `how explain`, and `how !`. |
 | ✅ `LIVE` | **4. Normie Safety Traffic Lights** | Labels every command `🟢 Safe`, `🟡 Modifies files`, or `🔴 Destructive / Admin` (`how run` requires typing `yes` for 🔴). |
 | ✅ `LIVE` | **5. Closed-Loop Autonomous ASI** | Validates bounded `SEARCH/REPLACE` patches against 4 hard gates, rolls back regressions, and opens verified PRs. |
 
@@ -206,18 +206,18 @@ how test [--stats]                # Run self-test and speed benchmark
 
 </details>
 
-### ✅ 3. From `how` to `where` — and the Unified `om` CLI ("om!") (`[LIVE — v0.6]`)
-**Effect:** Use one friendly 2-letter tool (**`om`**) to learn **how** to do anything, find **where** any file or config is stored, or **fix** your last failed command.
+### ✅ 3. Beyond Procedural `how` — Spatial (`where`), Diagnostic (`fix`), and Anatomy (`explain`) (`[LIVE — v0.6]`)
+**Effect:** Use `how` not only to learn **how** to do anything, but also to find **where** any file, config, log, or port lives, **explain** any pipeline, or **fix** your last failed command.
 
 <details>
-<summary><b>▸ Way / Form: `where` local probes + `om` wrapper syntax</b></summary>
+<summary><b>▸ Way / Form: `where` local probes & multi-intent routing in `how`</b></summary>
 
 ```bash
-om how to switch audio output          # Procedural: how to do X
-om where is hyprland monitor config    # Spatial: locate file, config, log, binary, or port (<5ms)
-om -0 where pacman.conf                # Path only (/etc/pacman.conf)
-om fix                                 # Diagnostic: inspect last failed command & propose fix
-om !                                   # Action: preview & execute last suggested command
+how to switch audio output             # Procedural: how to do X
+how where is hyprland monitor config   # Spatial: locate file, config, log, binary, or port (<5ms)
+how -0 where pacman.conf               # Path only (/etc/pacman.conf)
+how fix                                # Diagnostic: inspect last failed command & propose fix
+how !                                  # Action: preview & execute last suggested command
 ```
 
 - **`where` Engine (`locate_where_targets`):** Combines curated Omarchy/Hyprland/Arch config & log paths with live read-only local probes (`~/.config/*`, `$PATH` via `shutil.which`, and socket ports) to return the exact path and a `🟢 SAFE` inspect command in `<5 ms`.
@@ -233,7 +233,7 @@ om !                                   # Action: preview & execute last suggeste
 - **Traffic-Light Risk Badges:**
   - `🟢 Safe (read-only)` — only inspects info (`ls`, `df`, `ip`, `pacman -Si`)
   - `🟡 Modifies files/packages` — edits configs or installs packages (`pacman -S`, `cp`, `sed -i`)
-  - `🔴 Destructive / Admin` — deletes data or alters boot/disks (`rm -rf`, `dd`, `mkfs`); requires typing `yes` in `how run` / `om !`.
+  - `🔴 Destructive / Admin` — deletes data or alters boot/disks (`rm -rf`, `dd`, `mkfs`); requires typing `yes` in `how run` / `how !`.
 - **Plain-English Flag Breakdown (`how explain`):** Offline `<1 ms` breakdown of each pipeline stage and flag (`-r` = recursive, `-f` = force).
 
 </details>

@@ -33,7 +33,7 @@ TEST_SUITE_PATH = os.path.join(REPO_ROOT, "tests", "test_vv_suite.py")
 SAFETY_SUITE_PATH = os.path.join(REPO_ROOT, "tests", "test_safety.py")
 AB_BENCH_PATH = os.path.join(REPO_ROOT, "tests", "test_ab_bench.py")
 
-SYSTEM_PROMPT = """You are a world-class Principal Systems Architect & Performance Lead maintaining the `how` / `om` CLI repository (an ultra-fast Linux & Omarchy CLI assistant).
+SYSTEM_PROMPT = """You are a world-class Principal Systems Architect & Performance Lead maintaining the `how` CLI repository (an ultra-fast Linux & Omarchy CLI assistant).
 
 CRITICAL PHILOSOPHY:
 - End-user outcome is everything.

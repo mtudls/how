@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | om | context | triage | status | model | auth | cache | history | feedback | test
-# omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | om where pacman config | how explain "tar -xzvf a.tgz" | how fix | how run
-# omarchy:aliases=howto,om
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | test
+# omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | how where pacman config | how explain "tar -xzvf a.tgz" | how fix | how run
+# omarchy:aliases=howto
 """
 how - Fast, concise, direct CLI tool to learn "how to do sht in ..."
 Built for Omarchy, Linux, and modern developer stacks.
@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -58,14 +58,13 @@ def print_help():
     help_text = f"""Usage:
   {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--offline|--reflex] [--yolo|--careful|--dry-run] <query...>
   {CYAN}how{RESET} <command> [args...]
-  {CYAN}om{RESET} [how|where|fix|explain|!|<query...>]
 
 Examples:
   {CYAN}how{RESET} to switch audio output in omarchy      {DIM}# Instant command + concise explanation{RESET}
   {CYAN}how -0{RESET} to find largest files in .          {DIM}# Command only (zero fluff, copy-ready){RESET}
   {CYAN}how where{RESET} hyprland monitor config          {DIM}# Locate files, configs, logs, binaries & ports{RESET}
   {CYAN}how --offline{RESET} to check memory usage        {DIM}# Tier-0 System-1 reflex (<3ms, zero network){RESET}
-  {CYAN}om !{RESET}                                       {DIM}# Preview or run last suggested command{RESET}
+  {CYAN}how !{RESET}                                      {DIM}# Preview or run last suggested command{RESET}
   {CYAN}how -t{RESET} to fix limine secure boot           {DIM}# Deep reasoning mode for troubleshooting{RESET}
   {CYAN}how --yolo{RESET} to run single test file         {DIM}# Auto-read OS/stack & print what was read{RESET}
 
@@ -74,8 +73,7 @@ Commands:
   {CYAN}reflex{RESET} <query...>                       Offline <3ms System-1 reflex engine (zero network calls)
   {CYAN}explain{RESET} [command...]                   Offline <1ms visual pipeline & flag anatomy + safety badge
   {CYAN}fix{RESET} [error...]                         Diagnose & repair the last command (offline rules + AI fallback)
-  {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command with safety check
-  {CYAN}om{RESET} [how|where|fix|explain|!|<query>]   Unified CLI router for procedural, spatial & repair tasks
+  {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command with safety check ({CYAN}how !{RESET})
   {CYAN}context{RESET} [careful|yolo|dry-run|on|off]  Graduated OS & stack discovery (default: careful)
   {CYAN}triage{RESET} [on|off|<query...>]             Groq question triage & deep-thinking routing
   {CYAN}status{RESET}                                 Unified dashboard (auth, models, context, cache, engine)
@@ -3456,7 +3454,7 @@ def prompt_repeat_question_memory(raw_query: str, hit_count: int, seconds_since_
 
 # -----------------------------------------------------------------------------
 # Tier-0 System-1 Offline Reflex Engine (<3ms `basal` / `jev` local reflex)
-# & Spatial Locator (`where`) + Unified `om` CLI Router
+# & Spatial Locator (`where`)
 # -----------------------------------------------------------------------------
 
 def classify_query_intent(query: str) -> str:
@@ -5025,7 +5023,7 @@ def locate_where_targets(query: str) -> list[dict]:
 
 
 def run_where_command(args, opts=None):
-    """Handles `how where <query...>` / `om where <query...>` — <5ms spatial locator."""
+    """Handles `how where <query...>` — <5ms spatial locator."""
     import time
     t0 = time.perf_counter()
     opts = opts or {}
@@ -5037,8 +5035,8 @@ def run_where_command(args, opts=None):
         print(f"\n{YELLOW}! Please specify what config, file, log, binary, or port to locate.{RESET}")
         print(f"{DIM}Examples:{RESET}")
         print(f"  {CYAN}how where hyprland monitor config{RESET}")
-        print(f"  {CYAN}om where pacman log{RESET}")
-        print(f"  {CYAN}om -0 where waybar config{RESET}\n")
+        print(f"  {CYAN}how where pacman log{RESET}")
+        print(f"  {CYAN}how -0 where waybar config{RESET}\n")
         return
 
     targets = locate_where_targets(query)
@@ -5084,7 +5082,7 @@ def get_shell_init_script(shell_name: str = "bash") -> str:
     """
     sh = (shell_name or "bash").lower().strip()
     if sh == "zsh":
-        return """# how / om in-place readline prompt widget (Alt+H)
+        return """# how in-place readline prompt widget (Alt+H)
 _how_zle_widget() {
   local q="${BUFFER#\\#}"
   q="${q#"${q%%[![:space:]]*}"}"
@@ -5101,7 +5099,7 @@ zle -N _how_zle_widget
 bindkey '\\eh' _how_zle_widget
 """
     if sh == "fish":
-        return """# how / om in-place prompt widget (Alt+H)
+        return """# how in-place prompt widget (Alt+H)
 function _how_fish_widget
   set -l q (string replace -r '^\\s*#?\\s*' '' -- (commandline -b))
   test -z "$q"; and return
@@ -5113,7 +5111,7 @@ function _how_fish_widget
 end
 bind \\eh _how_fish_widget
 """
-    return """# how / om in-place readline prompt widget (Alt+H)
+    return """# how in-place readline prompt widget (Alt+H)
 _how_readline_widget() {
   local q="${READLINE_LINE#\\#}"
   q="${q#"${q%%[![:space:]]*}"}"
@@ -5135,101 +5133,6 @@ def run_shell_init_command(args):
     if shell_name not in ("bash", "zsh", "fish"):
         shell_name = "bash"
     sys.stdout.write(get_shell_init_script(shell_name))
-
-
-def is_om_invocation() -> bool:
-    """Returns True if `how` was invoked via the unified `om` CLI binary/symlink."""
-    invoked = os.environ.get("HOW_INVOKED_AS") or os.path.basename(sys.argv[0] if sys.argv else "")
-    return invoked.lower() in ("om", "om.py")
-
-
-def dispatch_om_cli(args, opts):
-    """
-    Unified `om` CLI router (`om how ...`, `om where ...`, `om fix ...`, `om explain ...`, `om !`, or natural intent).
-    """
-    if not args:
-        print_help()
-        return True
-
-    first = args[0].lower()
-    rest = args[1:]
-
-    if first == "how":
-        if not rest:
-            print_help()
-            return True
-        if dispatch_subcommand(rest, opts):
-            return True
-        ask_groq(
-            " ".join(rest),
-            verbosity=opts.get("verbosity"),
-            no_cache=opts.get("no_cache", False),
-            custom_retention=opts.get("custom_retention"),
-            think_mode=opts.get("think_mode"),
-            no_context=opts.get("no_context", False),
-            force_context=opts.get("force_context", False),
-            context_mode_override=opts.get("context_mode_override"),
-            dry_run=opts.get("dry_run", False),
-            no_escalate=opts.get("no_escalate", False),
-            offline=opts.get("offline", False),
-            reflex_first=opts.get("reflex_first", False),
-        )
-        return True
-
-    if first in ("where", "locate"):
-        run_where_command(rest, opts)
-        return True
-
-    if first in ("reflex", "offline"):
-        run_offline_reflex(" ".join(rest), verbosity=opts.get("verbosity"))
-        return True
-
-    if first in ("!", "run") and len(args) == 1:
-        run_last_command(auto_yes=opts.get("feedback_yes", False), dry_run=opts.get("dry_run", False))
-        return True
-
-    if first in ("fix", "repair", "diagnose"):
-        run_fix_command(rest, opts)
-        return True
-
-    if first in ("explain", "anatomy", "dissect"):
-        run_explain_command(rest)
-        return True
-
-    if first in ("shell-init", "init-shell"):
-        run_shell_init_command(rest)
-        return True
-
-    if dispatch_subcommand(args, opts):
-        return True
-
-    full_q = " ".join(args)
-    intent = classify_query_intent(full_q)
-    if intent == "where":
-        run_where_command(args, opts)
-        return True
-    if intent == "fix":
-        run_fix_command(args, opts)
-        return True
-    if intent == "explain":
-        run_explain_command(args)
-        return True
-
-    ask_groq(
-        full_q,
-        verbosity=opts.get("verbosity"),
-        no_cache=opts.get("no_cache", False),
-        custom_retention=opts.get("custom_retention"),
-        think_mode=opts.get("think_mode"),
-        no_context=opts.get("no_context", False),
-        force_context=opts.get("force_context", False),
-        context_mode_override=opts.get("context_mode_override"),
-        dry_run=opts.get("dry_run", False),
-        no_escalate=opts.get("no_escalate", False),
-        offline=opts.get("offline", False),
-        reflex_first=opts.get("reflex_first", False),
-    )
-    return True
 
 
 # -----------------------------------------------------------------------------
@@ -5982,10 +5885,7 @@ def parse_cli_args(raw_args):
     non_flags = [a.lower() for a in raw_args if not a.startswith("-")]
     if any(a.lower() in ("--feedback", "--bug", "--issue", "--report") for a in raw_args):
         is_feedback_context = True
-    elif non_flags and (
-        non_flags[0] in ("feedback", "bug", "report", "issue", "run", "!")
-        or (len(non_flags) >= 2 and non_flags[0] == "om" and non_flags[1] in ("run", "!", "feedback"))
-    ):
+    elif non_flags and non_flags[0] in ("feedback", "bug", "report", "issue", "run", "!"):
         is_feedback_context = True
 
     i = 0
@@ -6120,9 +6020,6 @@ def dispatch_subcommand(args, opts):
     if first == "status" and len(args) == 1:
         show_unified_status()
         return True
-
-    if first == "om":
-        return dispatch_om_cli(args[1:], opts)
 
     if first in ("where", "locate"):
         run_where_command(args[1:], opts)
@@ -6299,14 +6196,21 @@ def main():
         print_help()
         sys.exit(0)
 
-    if is_om_invocation():
-        dispatch_om_cli(args, opts)
-        sys.exit(0)
-
     if dispatch_subcommand(args, opts):
         sys.exit(0)
 
     query = " ".join(args)
+    intent = classify_query_intent(query)
+    if intent == "where":
+        run_where_command(args, opts)
+        sys.exit(0)
+    if intent == "fix":
+        run_fix_command(args, opts)
+        sys.exit(0)
+    if intent == "explain":
+        run_explain_command(args)
+        sys.exit(0)
+
     ask_groq(
         query,
         verbosity=opts.get("verbosity"),

@@ -429,13 +429,6 @@ fn delegate_to_python(args: &[String]) -> ! {{
     if env::var_os("HOW_REPO_DIR").is_none() {{
         cmd.env("HOW_REPO_DIR", SOURCE_REPO_DIR);
     }}
-    if env::var_os("HOW_INVOKED_AS").is_none() {{
-        if let Some(arg0) = env::args().next() {{
-            if let Some(base) = Path::new(&arg0).file_name() {{
-                cmd.env("HOW_INVOKED_AS", base);
-            }}
-        }}
-    }}
     let runtime_file = env::temp_dir().join(format!(
         "how_embedded_{{}}_s{{}}.py",
         VERSION,
@@ -500,7 +493,6 @@ fn main() {{
         && !raw_args[0].eq_ignore_ascii_case("run")
         && raw_args[0] != "!"
         && !raw_args[0].eq_ignore_ascii_case("fix")
-        && !raw_args[0].eq_ignore_ascii_case("om")
         && !raw_args[0].eq_ignore_ascii_case("context")
     {{
         let query_words: Vec<&str> = raw_args

@@ -840,8 +840,8 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertIn("zle -N", self.how.get_shell_init_script("zsh"))
         self.assertIn("commandline -r", self.how.get_shell_init_script("fish"))
 
-    def test_where_spatial_locator_and_unified_om_cli(self):
-        """`how where` and unified `om` CLI route spatial, procedural, and repair commands accurately."""
+    def test_where_spatial_locator_and_how_intent_routing(self):
+        """`how where` and `how` natural intent routing resolve spatial, procedural, and repair queries accurately."""
         import io
 
         # 1. `locate_where_targets` resolves Hyprland, Omarchy, Pacman, and Port targets
@@ -869,37 +869,30 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertIn("/var/log/pacman.log", buf_wn.getvalue())
         self.assertIn("SAFE", buf_wn.getvalue())
 
-        # 3. Unified `om` CLI routing (`om where`, `om how --offline`, `om fix`, `om <natural where query>`)
-        buf_om_w = io.StringIO()
-        with patch("sys.stdout", buf_om_w):
-            self.how.dispatch_om_cli(["where", "waybar", "config"], {"verbosity": "zero"})
-        self.assertTrue(buf_om_w.getvalue().strip().endswith(".config/waybar/config.jsonc"))
+        # 3. `how` subcommand & natural intent routing (`how where ...`, `how "where is ..."`)
+        buf_how_w = io.StringIO()
+        with patch("sys.stdout", buf_how_w):
+            handled = self.how.dispatch_subcommand(["where", "waybar", "config"], {"verbosity": "zero"})
+        self.assertTrue(handled)
+        self.assertTrue(buf_how_w.getvalue().strip().endswith(".config/waybar/config.jsonc"))
 
-        buf_om_nat = io.StringIO()
-        with patch("sys.stdout", buf_om_nat):
-            self.how.dispatch_om_cli(["where", "is", "hyprland", "bindings"], {"verbosity": "zero"})
-        self.assertTrue(buf_om_nat.getvalue().strip().endswith(".config/hypr/bindings.conf"))
+        self.assertEqual(self.how.classify_query_intent("where is hyprland bindings"), "where")
+        self.assertEqual(self.how.classify_query_intent("fix permission denied"), "fix")
+        self.assertEqual(self.how.classify_query_intent("explain tar -xzvf a.tgz"), "explain")
 
-        buf_om_how = io.StringIO()
-        with patch("sys.stdout", buf_om_how):
-            self.how.dispatch_om_cli(
-                ["how", "to", "check", "memory", "usage"],
-                {"verbosity": "zero", "offline": True},
-            )
-        self.assertIn("free -h", buf_om_how.getvalue())
-
-        # 4. Repo root `om` symlink exists and works
+        # 4. Repo root `how` entrypoint works for `where` and no `om` binary/symlink exists
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         om_path = os.path.join(repo_root, "om")
-        self.assertTrue(os.path.exists(om_path), "Expected `om` entrypoint in repo root")
-        proc_om = subprocess.run(
-            [sys.executable, om_path, "-0", "where", "pacman", "conf"],
+        self.assertFalse(os.path.exists(om_path), "`om` symlink must not exist in repo root")
+        how_path = os.path.join(repo_root, "how")
+        proc_how = subprocess.run(
+            [sys.executable, how_path, "-0", "where", "pacman", "conf"],
             capture_output=True,
             text=True,
-            env={**os.environ, "HOW_INVOKED_AS": "om", "NO_COLOR": "1"},
+            env={**os.environ, "NO_COLOR": "1"},
         )
-        self.assertEqual(proc_om.returncode, 0)
-        self.assertEqual(proc_om.stdout.strip(), "/etc/pacman.conf")
+        self.assertEqual(proc_how.returncode, 0)
+        self.assertEqual(proc_how.stdout.strip(), "/etc/pacman.conf")
 
     def test_closed_loop_asi_search_replace_and_gate_rollback(self):
         """scripts/ai_architect_review.py applies valid SEARCH/REPLACE blocks and rolls back on gate failure."""
