@@ -7,19 +7,12 @@
   "license": "MIT",
   "description": "Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack.",
   "kinds": [
-    "bar-widget",
+    "service",
     "cli",
     "agent"
   ],
   "entryPoints": {
-    "barWidget": "BarWidget.qml",
+    "service": "Service.qml",
     "cli": "how"
-  },
-  "barWidget": {
-    "displayName": "how",
-    "description": "Ask how to do anything in Omarchy & Linux (<1ms reflex + LPU).",
-    "category": "AI",
-    "allowMultiple": false,
-    "defaultSection": "right"
   }
 }

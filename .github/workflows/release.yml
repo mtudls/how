@@ -35,7 +35,7 @@ jobs:
 
       - name: Generate SHA256 Checksums
         run: |
-          sha256sum how how-linux-x86_64 install.sh manifest.json BarWidget.qml > SHA256SUMS.txt
+          sha256sum how how-linux-x86_64 install.sh manifest.json Service.qml PKGBUILD > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -46,7 +46,8 @@ jobs:
             how-linux-x86_64
             install.sh
             manifest.json
-            BarWidget.qml
+            Service.qml
+            PKGBUILD
             SHA256SUMS.txt
           generate_release_notes: true
           draft: false

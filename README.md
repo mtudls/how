@@ -16,10 +16,13 @@ Built for **Omarchy**, **Linux**, and your local project stack.
 ## Quick Start (Zero-Setup Out of the Box)
 
 ```bash
-# Option A — Install as an Omarchy Plugin (adds top-bar widget + installs native `how` CLI):
+# Option A — Install via Omarchy Plugin CLI (console-only, zero bar icons):
 omarchy plugin add https://github.com/mdsyseng/how.git --enable
 
-# Option B — Standalone CLI install:
+# Option B — Install as an Arch / Omarchy Package (makepkg / pacman):
+git clone https://github.com/mdsyseng/how.git && cd how && makepkg -si
+
+# Option C — Direct CLI install:
 git clone https://github.com/mdsyseng/how.git && cd how
 ./install.sh                    # Installs native Rust `how` — works immediately with 0 setup!
 eval "$(how shell-init bash)"   # Optional: bind Alt+H to replace `# query` in-place in your shell prompt
