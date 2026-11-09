@@ -480,8 +480,14 @@ def test_product_convergence_and_wow_ux():
     assert w_targets and w_targets[0]["path"].endswith(".config/hypr/monitors.conf")
     assert not hasattr(how, "STATE_MACHINES") and not hasattr(how, "_ACTIVE_TRACE")
     manifest_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "manifest.json"))
+    repo_root = os.path.dirname(manifest_path)
     with open(manifest_path, "r", encoding="utf-8") as mf:
-        assert json.load(mf).get("version") == how.__version__
+        m_data = json.load(mf)
+        assert m_data.get("schemaVersion") == 1
+        assert m_data.get("version") == how.__version__
+        assert not str(m_data.get("id", "")).startswith("omarchy."), "Third-party Omarchy plugins must not use reserved omarchy.* namespace"
+        for ep_rel in m_data.get("entryPoints", {}).values():
+            assert os.path.isfile(os.path.join(repo_root, ep_rel)), f"Missing manifest entryPoint: {ep_rel}"
     print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms), `how where` locator & stateless invariants verified.")
     scores.append(100)
 

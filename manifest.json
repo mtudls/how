@@ -1,16 +1,25 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy.how",
+  "id": "io.github.mdsyseng.how",
   "name": "how",
   "version": "0.6.3",
-  "description": "Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack.",
   "author": "Mateusz Dzielinski",
   "license": "MIT",
+  "description": "Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack.",
   "kinds": [
+    "bar-widget",
     "cli",
     "agent"
   ],
   "entryPoints": {
+    "barWidget": "BarWidget.qml",
     "cli": "how"
+  },
+  "barWidget": {
+    "displayName": "how",
+    "description": "Ask how to do anything in Omarchy & Linux (<1ms reflex + LPU).",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }
