@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | test
-# omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | how where pacman config | how explain "tar -xzvf a.tgz" | how fix | how run
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--json|--trace] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | fsm | context | triage | status | model | auth | cache | history | feedback | test
+# omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | how --json to check memory usage | how explain "tar -xzvf a.tgz" | how fix | how run | how fsm
 # omarchy:aliases=howto
 """
 how - Fast, concise, direct CLI tool to learn "how to do sht in ..."
@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -56,7 +56,7 @@ MAGENTA = "\033[35m" if USE_COLOR else ""
 
 def print_help():
     help_text = f"""Usage:
-  {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--offline|--reflex] [--yolo|--careful|--dry-run] <query...>
+  {CYAN}how{RESET} [-0|--low] [-t|--think|--fast] [--offline|--reflex] [--json|--trace] [--yolo|--careful|--dry-run] <query...>
   {CYAN}how{RESET} <command> [args...]
 
 Examples:
@@ -64,9 +64,10 @@ Examples:
   {CYAN}how -0{RESET} to find largest files in .          {DIM}# Command only (zero fluff, copy-ready){RESET}
   {CYAN}how where{RESET} hyprland monitor config          {DIM}# Locate files, configs, logs, binaries & ports{RESET}
   {CYAN}how --offline{RESET} to check memory usage        {DIM}# Tier-0 System-1 reflex (<3ms, zero network){RESET}
+  {CYAN}how --json{RESET} to check memory usage           {DIM}# Structured JSON envelope + FSM trace for agents (AX){RESET}
+  {CYAN}how --trace{RESET} to find open ports             {DIM}# Visual microsecond state machine timeline (DX){RESET}
   {CYAN}how !{RESET}                                      {DIM}# Preview or run last suggested command{RESET}
   {CYAN}how -t{RESET} to fix limine secure boot           {DIM}# Deep reasoning mode for troubleshooting{RESET}
-  {CYAN}how --yolo{RESET} to run single test file         {DIM}# Auto-read OS/stack & print what was read{RESET}
 
 Commands:
   {CYAN}where{RESET} <query...>                        Offline <5ms spatial locator for configs, logs, files & ports
@@ -74,6 +75,7 @@ Commands:
   {CYAN}explain{RESET} [command...]                   Offline <1ms visual pipeline & flag anatomy + safety badge
   {CYAN}fix{RESET} [error...]                         Diagnose & repair the last command (offline rules + AI fallback)
   {CYAN}run{RESET} [-y|--dry-run]                     Preview or execute the last suggested command with safety check ({CYAN}how !{RESET})
+  {CYAN}fsm{RESET} [machine|--mermaid|--json]         Inspect the 8 explicit finite state machines powering `how`
   {CYAN}context{RESET} [careful|yolo|dry-run|on|off]  Graduated OS & stack discovery (default: careful)
   {CYAN}triage{RESET} [on|off|<query...>]             Groq question triage & deep-thinking routing
   {CYAN}status{RESET}                                 Unified dashboard (auth, models, context, cache, engine)
@@ -93,6 +95,8 @@ Options:
   {GREEN}--fast{RESET}                                 Force instant Groq execution (bypass triage)
   {GREEN}--offline{RESET}                              Force Tier-0 System-1 offline reflex (<3ms, no network)
   {GREEN}--reflex{RESET}                               Check Tier-0 System-1 reflex first before cloud LPU
+  {GREEN}--json{RESET}                                 Output deterministic JSON envelope + state trace for AI agents (AX)
+  {GREEN}--trace{RESET}                                Print explicit state machine transition timeline & timings (DX)
   {GREEN}--careful{RESET}                              Step-by-step user-approved context discovery with dry-run
   {GREEN}--yolo{RESET}                                 Auto-read OS, stack & docs and state what was read
   {GREEN}--dry-run{RESET}                              Show dry-run context & doc commands without executing
@@ -156,6 +160,460 @@ def is_uncertain_response(text: str) -> bool:
     if "```" not in cleaned and (low.startswith("i don't know") or low.startswith("i dont know")):
         return True
     return False
+
+
+# -----------------------------------------------------------------------------
+# Explicit Finite State Machine Registry & Execution Trace Engine (UX / DX / AX)
+# -----------------------------------------------------------------------------
+
+STATE_MACHINES = {
+    "query_lifecycle": {
+        "title": "Main Query Resolution Cascade",
+        "description": "Governs end-to-end query routing across Offline Reflex, Cache, Zero-Setup Cloud, Fast LPU, and Pre-IDK Escalation.",
+        "initial": "INIT",
+        "states": (
+            "INIT",
+            "INTENT_CLASSIFIED",
+            "DRY_RUN_PREVIEW",
+            "TIER0_REFLEX",
+            "CONTEXT_RESOLVED",
+            "CACHE_LOOKUP",
+            "ZERO_SETUP_CLOUD",
+            "TRIAGE_ROUTED",
+            "FAST_LPU_STREAM",
+            "PRE_IDK_STEP1_REFINED",
+            "PRE_IDK_STEP2_ESCALATED",
+            "MODEL_FAILOVER",
+            "EMITTED",
+            "UNCERTAIN_IDK",
+        ),
+        "terminal": ("EMITTED", "UNCERTAIN_IDK", "DRY_RUN_PREVIEW"),
+        "transitions": {
+            "INIT": ("INTENT_CLASSIFIED", "TIER0_REFLEX", "DRY_RUN_PREVIEW", "CONTEXT_RESOLVED"),
+            "INTENT_CLASSIFIED": ("TIER0_REFLEX", "DRY_RUN_PREVIEW", "CONTEXT_RESOLVED", "EMITTED", "UNCERTAIN_IDK"),
+            "TIER0_REFLEX": ("EMITTED", "UNCERTAIN_IDK", "CONTEXT_RESOLVED", "ZERO_SETUP_CLOUD"),
+            "CONTEXT_RESOLVED": ("CACHE_LOOKUP", "ZERO_SETUP_CLOUD", "TRIAGE_ROUTED", "FAST_LPU_STREAM"),
+            "CACHE_LOOKUP": ("EMITTED", "ZERO_SETUP_CLOUD", "TRIAGE_ROUTED", "FAST_LPU_STREAM", "TIER0_REFLEX"),
+            "ZERO_SETUP_CLOUD": ("EMITTED", "UNCERTAIN_IDK", "TRIAGE_ROUTED", "FAST_LPU_STREAM"),
+            "TRIAGE_ROUTED": ("FAST_LPU_STREAM", "PRE_IDK_STEP2_ESCALATED", "EMITTED", "UNCERTAIN_IDK"),
+            "FAST_LPU_STREAM": ("EMITTED", "PRE_IDK_STEP1_REFINED", "MODEL_FAILOVER", "TIER0_REFLEX", "UNCERTAIN_IDK"),
+            "PRE_IDK_STEP1_REFINED": ("EMITTED", "PRE_IDK_STEP2_ESCALATED", "UNCERTAIN_IDK"),
+            "PRE_IDK_STEP2_ESCALATED": ("EMITTED", "UNCERTAIN_IDK"),
+            "MODEL_FAILOVER": ("FAST_LPU_STREAM", "TIER0_REFLEX", "EMITTED", "UNCERTAIN_IDK"),
+        },
+    },
+    "sse_stream": {
+        "title": "SSE Stream Uncertainty Window & Sanitizer",
+        "description": "Buffers initial <=28 chars so uncertain 'I don't know' outputs never flash before Pre-IDK escalation runs.",
+        "initial": "INIT",
+        "states": ("INIT", "BUFFERING_WINDOW", "STREAMING_LIVE", "SUPPRESSED_UNCERTAIN", "COMPLETED"),
+        "terminal": ("COMPLETED", "SUPPRESSED_UNCERTAIN"),
+        "transitions": {
+            "INIT": ("BUFFERING_WINDOW", "STREAMING_LIVE", "COMPLETED"),
+            "BUFFERING_WINDOW": ("STREAMING_LIVE", "SUPPRESSED_UNCERTAIN", "COMPLETED"),
+            "STREAMING_LIVE": ("COMPLETED",),
+        },
+    },
+    "context_permissions": {
+        "title": "Graduated Environment & Stack Discovery",
+        "description": "Controls consent-driven read-only OS, desktop, and project stack inspection with transparent read receipts.",
+        "initial": "UNCHECKED",
+        "states": (
+            "UNCHECKED",
+            "DISABLED_OFF",
+            "DRY_RUN_PLAN",
+            "STEP_BY_STEP_CAREFUL",
+            "ACTIVE_CAREFUL",
+            "ACTIVE_YOLO",
+            "RECEIPT_EMITTED",
+        ),
+        "terminal": ("DISABLED_OFF", "DRY_RUN_PLAN", "RECEIPT_EMITTED"),
+        "transitions": {
+            "UNCHECKED": ("DISABLED_OFF", "DRY_RUN_PLAN", "STEP_BY_STEP_CAREFUL", "ACTIVE_CAREFUL", "ACTIVE_YOLO"),
+            "STEP_BY_STEP_CAREFUL": ("ACTIVE_CAREFUL", "ACTIVE_YOLO", "DISABLED_OFF", "RECEIPT_EMITTED"),
+            "ACTIVE_CAREFUL": ("RECEIPT_EMITTED", "DISABLED_OFF"),
+            "ACTIVE_YOLO": ("RECEIPT_EMITTED",),
+        },
+    },
+    "command_safety_lifecycle": {
+        "title": "Command Traffic-Light Safety & Execution Gate",
+        "description": "Classifies every command as SAFE/MODIFIES/DESTRUCTIVE and enforces dry-run & 'yes' confirmation gates.",
+        "initial": "RAW_CANDIDATE",
+        "states": (
+            "RAW_CANDIDATE",
+            "CLASSIFIED_SAFE",
+            "CLASSIFIED_MODIFIES",
+            "CLASSIFIED_DESTRUCTIVE",
+            "PROPOSED_LOGGED",
+            "DRY_RUN_INSPECTED",
+            "CONFIRMATION_GATE",
+            "EXECUTED",
+            "CANCELLED",
+        ),
+        "terminal": ("PROPOSED_LOGGED", "DRY_RUN_INSPECTED", "EXECUTED", "CANCELLED"),
+        "transitions": {
+            "RAW_CANDIDATE": ("CLASSIFIED_SAFE", "CLASSIFIED_MODIFIES", "CLASSIFIED_DESTRUCTIVE"),
+            "CLASSIFIED_SAFE": ("PROPOSED_LOGGED", "DRY_RUN_INSPECTED", "CONFIRMATION_GATE", "EXECUTED"),
+            "CLASSIFIED_MODIFIES": ("PROPOSED_LOGGED", "DRY_RUN_INSPECTED", "CONFIRMATION_GATE", "EXECUTED"),
+            "CLASSIFIED_DESTRUCTIVE": ("PROPOSED_LOGGED", "DRY_RUN_INSPECTED", "CONFIRMATION_GATE", "EXECUTED"),
+            "PROPOSED_LOGGED": ("DRY_RUN_INSPECTED", "CONFIRMATION_GATE", "EXECUTED"),
+            "DRY_RUN_INSPECTED": ("CONFIRMATION_GATE", "EXECUTED", "CANCELLED"),
+            "CONFIRMATION_GATE": ("EXECUTED", "CANCELLED"),
+        },
+    },
+    "cache_repeat_memory": {
+        "title": "Sliding-TTL Cache & Repeat-Question Memory",
+        "description": "Tracks SQLite WAL response TTL, hit counts, and 30m interactive repeat-question escalation.",
+        "initial": "LOOKUP",
+        "states": (
+            "LOOKUP",
+            "BYPASSED",
+            "CACHE_MISS",
+            "CACHE_HIT_FRESH",
+            "CACHE_HIT_REPEAT_WINDOW",
+            "REPEAT_PROMPT_DEEP",
+            "REPEAT_PROMPT_FIX",
+            "REPEAT_SHOWN_CACHED",
+            "CACHE_SAVED",
+        ),
+        "terminal": (
+            "BYPASSED",
+            "CACHE_MISS",
+            "CACHE_HIT_FRESH",
+            "REPEAT_PROMPT_DEEP",
+            "REPEAT_PROMPT_FIX",
+            "REPEAT_SHOWN_CACHED",
+            "CACHE_SAVED",
+        ),
+        "transitions": {
+            "LOOKUP": ("BYPASSED", "CACHE_MISS", "CACHE_HIT_FRESH", "CACHE_HIT_REPEAT_WINDOW", "CACHE_SAVED"),
+            "CACHE_MISS": ("CACHE_SAVED",),
+            "BYPASSED": ("CACHE_SAVED",),
+            "CACHE_HIT_REPEAT_WINDOW": ("REPEAT_PROMPT_DEEP", "REPEAT_PROMPT_FIX", "REPEAT_SHOWN_CACHED"),
+        },
+    },
+    "shell_pipeline_lexer": {
+        "title": "Shell Pipeline Quote/Subshell Lexer & Flag Anatomy",
+        "description": "Tokenizes shell pipelines across quotes, escapes, and $(...) subshells into per-stage flag anatomy.",
+        "initial": "UNQUOTED",
+        "states": (
+            "UNQUOTED",
+            "SINGLE_QUOTED",
+            "DOUBLE_QUOTED",
+            "ESCAPED",
+            "SUBSHELL_NESTED",
+            "STAGES_SPLIT",
+            "ANATOMY_RESOLVED",
+        ),
+        "terminal": ("STAGES_SPLIT", "ANATOMY_RESOLVED"),
+        "transitions": {
+            "UNQUOTED": ("SINGLE_QUOTED", "DOUBLE_QUOTED", "ESCAPED", "SUBSHELL_NESTED", "STAGES_SPLIT"),
+            "SINGLE_QUOTED": ("UNQUOTED",),
+            "DOUBLE_QUOTED": ("UNQUOTED", "ESCAPED"),
+            "ESCAPED": ("UNQUOTED", "DOUBLE_QUOTED"),
+            "SUBSHELL_NESTED": ("UNQUOTED", "SUBSHELL_NESTED"),
+            "STAGES_SPLIT": ("ANATOMY_RESOLVED",),
+        },
+    },
+    "local_docs_rag": {
+        "title": "Sandboxed Local Documentation Cascade",
+        "description": "Resolves local CLI documentation in strict safety order: Omarchy static header -> tldr -> man -> bwrap --help.",
+        "initial": "CANDIDATES_EXTRACTED",
+        "states": (
+            "CANDIDATES_EXTRACTED",
+            "OMARCHY_STATIC_HEADER",
+            "LOCAL_TLDR_PAGE",
+            "SYSTEM_MAN_SYNOPSIS",
+            "BWRAP_SANDBOX_HELP",
+            "NO_DOC_FOUND",
+            "DOCS_ATTACHED",
+        ),
+        "terminal": ("NO_DOC_FOUND", "DOCS_ATTACHED"),
+        "transitions": {
+            "CANDIDATES_EXTRACTED": (
+                "OMARCHY_STATIC_HEADER",
+                "LOCAL_TLDR_PAGE",
+                "SYSTEM_MAN_SYNOPSIS",
+                "BWRAP_SANDBOX_HELP",
+                "NO_DOC_FOUND",
+                "DOCS_ATTACHED",
+            ),
+            "OMARCHY_STATIC_HEADER": ("DOCS_ATTACHED", "OMARCHY_STATIC_HEADER", "LOCAL_TLDR_PAGE", "SYSTEM_MAN_SYNOPSIS", "BWRAP_SANDBOX_HELP"),
+            "LOCAL_TLDR_PAGE": ("DOCS_ATTACHED", "OMARCHY_STATIC_HEADER", "LOCAL_TLDR_PAGE", "SYSTEM_MAN_SYNOPSIS", "BWRAP_SANDBOX_HELP"),
+            "SYSTEM_MAN_SYNOPSIS": ("DOCS_ATTACHED", "OMARCHY_STATIC_HEADER", "LOCAL_TLDR_PAGE", "SYSTEM_MAN_SYNOPSIS", "BWRAP_SANDBOX_HELP"),
+            "BWRAP_SANDBOX_HELP": ("DOCS_ATTACHED", "OMARCHY_STATIC_HEADER", "LOCAL_TLDR_PAGE", "SYSTEM_MAN_SYNOPSIS", "BWRAP_SANDBOX_HELP"),
+        },
+    },
+    "closed_loop_asi": {
+        "title": "Closed-Loop Autonomous Self-Improvement (Code -> Gate -> PR)",
+        "description": "Applies bounded SEARCH/REPLACE patches and enforces 4 deterministic verification gates with automatic rollback.",
+        "initial": "BENCHMARK_COLLECTED",
+        "states": (
+            "BENCHMARK_COLLECTED",
+            "PROPOSAL_PARSED",
+            "PATCH_APPLIED",
+            "GATE_1_RUST_COMPILE",
+            "GATE_2_VV_100",
+            "GATE_3_SAFETY_100",
+            "GATE_4_AB_PARITY",
+            "VERIFIED_PR_OPENED",
+            "ROLLED_BACK",
+        ),
+        "terminal": ("VERIFIED_PR_OPENED", "ROLLED_BACK"),
+        "transitions": {
+            "BENCHMARK_COLLECTED": ("PROPOSAL_PARSED",),
+            "PROPOSAL_PARSED": ("PATCH_APPLIED", "ROLLED_BACK"),
+            "PATCH_APPLIED": ("GATE_1_RUST_COMPILE", "ROLLED_BACK"),
+            "GATE_1_RUST_COMPILE": ("GATE_2_VV_100", "ROLLED_BACK"),
+            "GATE_2_VV_100": ("GATE_3_SAFETY_100", "ROLLED_BACK"),
+            "GATE_3_SAFETY_100": ("GATE_4_AB_PARITY", "ROLLED_BACK"),
+            "GATE_4_AB_PARITY": ("VERIFIED_PR_OPENED", "ROLLED_BACK"),
+        },
+    },
+}
+
+
+def is_valid_state_transition(machine: str, from_state: str, to_state: str) -> bool:
+    """Checks whether `from_state -> to_state` is declared in `STATE_MACHINES[machine]`."""
+    spec = STATE_MACHINES.get(machine)
+    if not spec:
+        return False
+    if from_state == to_state and to_state in spec["states"]:
+        return True
+    allowed = spec["transitions"].get(from_state, ())
+    return to_state in allowed
+
+
+class ExecutionTrace:
+    """
+    Zero-dependency Finite State Machine Recorder & Structured Outcome Collector.
+    Elevates:
+    - UX: 1-line route breadcrumb (`intent:how -> reflex:sys_mem_free -> safe (0.4ms)`)
+    - DX: `--trace` visual state transition table with microsecond timestamps & transition validation
+    - AX: `--json` deterministic schema-versioned JSON envelope for AI agents and scripts
+    """
+
+    def __init__(self):
+        import time
+        self.t0 = time.perf_counter()
+        self.current_states = {name: spec["initial"] for name, spec in STATE_MACHINES.items()}
+        self.events = []
+        self.outcome = {
+            "intent": "how",
+            "state": "INIT",
+            "query": "",
+            "command": None,
+            "explanation": "",
+            "safety": None,
+            "anatomy": None,
+            "targets": None,
+            "diagnosis": None,
+            "context_read": "",
+            "source": "",
+            "cached": False,
+        }
+
+    def transition(self, machine: str, to_state: str, reason: str = "", **meta) -> dict:
+        import time
+        spec = STATE_MACHINES.get(machine)
+        from_state = self.current_states.get(machine, spec["initial"] if spec else "INIT")
+        valid = is_valid_state_transition(machine, from_state, to_state)
+        self.current_states[machine] = to_state
+        elapsed_ms = round((time.perf_counter() - self.t0) * 1000, 3)
+        ev = {
+            "step": len(self.events) + 1,
+            "machine": machine,
+            "from": from_state,
+            "to": to_state,
+            "valid": valid,
+            "reason": reason,
+            "elapsed_ms": elapsed_ms,
+        }
+        if meta:
+            ev["meta"] = meta
+        self.events.append(ev)
+        if machine == "query_lifecycle":
+            self.outcome["state"] = to_state
+        return ev
+
+    def update_outcome(self, **kwargs):
+        for k, v in kwargs.items():
+            if v is not None or k not in self.outcome:
+                self.outcome[k] = v
+
+    def route_breadcrumb(self) -> str:
+        """Compact 1-line UX/DX breadcrumb of key state transitions."""
+        import time
+        total_ms = (time.perf_counter() - self.t0) * 1000
+        parts = [f"intent:{self.outcome.get('intent') or 'how'}"]
+        seen = set()
+        for ev in self.events:
+            if ev["machine"] == "query_lifecycle" and ev["to"] not in ("INIT", "INTENT_CLASSIFIED"):
+                lbl = ev["to"].lower()
+                if ev.get("reason") and ":" in ev["reason"]:
+                    lbl = f"{lbl}({ev['reason']})"
+                if lbl not in seen:
+                    seen.add(lbl)
+                    parts.append(lbl)
+        safety = self.outcome.get("safety")
+        if isinstance(safety, dict) and safety.get("short_badge"):
+            parts.append(safety["short_badge"])
+        return f"{' → '.join(parts)} ({total_ms:.2f}ms)"
+
+    def render_timeline(self) -> str:
+        """Formats a developer-friendly (`--trace`) state transition timeline."""
+        import time
+        total_ms = (time.perf_counter() - self.t0) * 1000
+        lines = [
+            f"\n{BOLD}{MAGENTA}◆ Explicit State Machine Trace{RESET} "
+            f"{DIM}({len(self.events)} transitions in {total_ms:.2f}ms){RESET}",
+            f"  {BOLD}Route:{RESET} {CYAN}{self.route_breadcrumb()}{RESET}\n",
+        ]
+        for ev in self.events:
+            chk = f"{GREEN}✓{RESET}" if ev["valid"] else f"{YELLOW}!{RESET}"
+            rsn = f" {DIM}— {ev['reason']}{RESET}" if ev.get("reason") else ""
+            lines.append(
+                f"  {chk} {DIM}[+{ev['elapsed_ms']:6.2f}ms]{RESET} "
+                f"{BOLD}{ev['machine']:<25}{RESET} "
+                f"{DIM}{ev['from']}{RESET} {CYAN}──▶{RESET} {BOLD}{GREEN}{ev['to']}{RESET}{rsn}"
+            )
+        lines.append("")
+        return "\n".join(lines)
+
+    def to_agent_json(self) -> dict:
+        """Builds the deterministic AX JSON envelope (`--json`)."""
+        import time
+        total_ms = round((time.perf_counter() - self.t0) * 1000, 3)
+        cmd = self.outcome.get("command")
+        safety_raw = self.outcome.get("safety")
+        if not safety_raw and cmd and self.outcome.get("intent") != "where":
+            safety_raw = classify_command_safety(cmd)
+        safety_clean = None
+        if isinstance(safety_raw, dict):
+            safety_clean = {
+                "level": safety_raw.get("level", "safe"),
+                "short_badge": safety_raw.get("short_badge", "🟢 safe"),
+                "reason": safety_raw.get("reason", ""),
+            }
+        anatomy_clean = self.outcome.get("anatomy")
+        if not anatomy_clean and cmd and self.outcome.get("intent") in ("how", "fix", "explain"):
+            raw_anat = explain_command_anatomy(cmd)
+            anatomy_clean = {
+                "stages": raw_anat.get("stages", []),
+            }
+        active_states = {
+            m: st
+            for m, st in self.current_states.items()
+            if st != STATE_MACHINES[m]["initial"] or any(e["machine"] == m for e in self.events)
+        }
+        state_val = self.outcome.get("state") or "EMITTED"
+        ok = state_val not in ("UNCERTAIN_IDK", "CANCELLED") and (
+            bool(cmd) or bool(self.outcome.get("targets")) or state_val in ("DRY_RUN_PREVIEW", "EXPLAINED")
+        )
+        return {
+            "schema_version": "1.0",
+            "version": __version__,
+            "ok": ok,
+            "intent": self.outcome.get("intent", "how"),
+            "state": state_val,
+            "query": self.outcome.get("query", ""),
+            "command": cmd,
+            "explanation": strip_control_sequences(self.outcome.get("explanation") or "").strip(),
+            "source": self.outcome.get("source") or "",
+            "cached": bool(self.outcome.get("cached", False)),
+            "safety": safety_clean,
+            "anatomy": anatomy_clean,
+            "targets": self.outcome.get("targets"),
+            "diagnosis": self.outcome.get("diagnosis"),
+            "context_read": self.outcome.get("context_read") or "",
+            "route_breadcrumb": strip_control_sequences(self.route_breadcrumb()),
+            "elapsed_ms": total_ms,
+            "active_states": active_states,
+            "trace": self.events,
+        }
+
+
+_ACTIVE_TRACE = ExecutionTrace()
+
+
+def get_active_trace() -> ExecutionTrace:
+    """Returns the current active `ExecutionTrace` instance."""
+    return _ACTIVE_TRACE
+
+
+def reset_active_trace() -> ExecutionTrace:
+    """Resets and returns a fresh `ExecutionTrace` instance."""
+    global _ACTIVE_TRACE
+    _ACTIVE_TRACE = ExecutionTrace()
+    return _ACTIVE_TRACE
+
+
+def record_state_transition(machine: str, to_state: str, reason: str = "", **meta) -> dict:
+    """Records a state transition on the active `ExecutionTrace`."""
+    return _ACTIVE_TRACE.transition(machine, to_state, reason=reason, **meta)
+
+
+def set_trace_outcome(**kwargs):
+    """Updates structured outcome fields on the active `ExecutionTrace`."""
+    _ACTIVE_TRACE.update_outcome(**kwargs)
+
+
+def format_fsm_mermaid(machine_name: str = None) -> str:
+    """Generates a Mermaid `stateDiagram-v2` definition for one or all state machines in `how`."""
+    targets = (
+        {machine_name: STATE_MACHINES[machine_name]}
+        if machine_name in STATE_MACHINES
+        else STATE_MACHINES
+    )
+    blocks = []
+    for name, spec in targets.items():
+        lines = [f"stateDiagram-v2", f"    %% {name}: {spec['title']}", f"    [*] --> {spec['initial']}"]
+        for src, dsts in spec["transitions"].items():
+            for dst in dsts:
+                lines.append(f"    {src} --> {dst}")
+        for term in spec["terminal"]:
+            lines.append(f"    {term} --> [*]")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def run_fsm_command(args, opts=None):
+    """Handles `how fsm [machine_name|--mermaid|--json]` to inspect `how`'s 8 explicit state machines."""
+    import json
+    opts = opts or {}
+    as_json = opts.get("json_mode", False) or any(a.lower() == "--json" for a in args)
+    as_mermaid = any(a.lower() in ("--mermaid", "mermaid") for a in args)
+    clean_args = [a for a in args if a.lower() not in ("--json", "--mermaid", "mermaid")]
+    target = clean_args[0].lower() if clean_args else None
+
+    if target and target not in STATE_MACHINES:
+        if as_json:
+            print(json.dumps({"ok": False, "error": f"Unknown state machine: {target}", "available": list(STATE_MACHINES.keys())}, indent=2))
+            return
+        print(f"\n{RED}✗ Unknown state machine '{target}'.{RESET}")
+        print(f"{DIM}Available: {', '.join(STATE_MACHINES.keys())}{RESET}\n")
+        return
+
+    if as_json:
+        data = {target: STATE_MACHINES[target]} if target else STATE_MACHINES
+        print(json.dumps({"schema_version": "1.0", "state_machines": data}, indent=2))
+        return
+
+    if as_mermaid:
+        print(format_fsm_mermaid(target))
+        return
+
+    machines = {target: STATE_MACHINES[target]} if target else STATE_MACHINES
+    print(f"\n{BOLD}{MAGENTA}◆ how Explicit Finite State Machines ({len(machines)} machines){RESET}")
+    print(f"{DIM}Elevating UX (route breadcrumbs), DX (`--trace` & `how fsm --mermaid`), and AX (`--json`).{RESET}\n")
+    for idx, (name, spec) in enumerate(machines.items(), 1):
+        edge_count = sum(len(v) for v in spec["transitions"].values())
+        print(f"  {BOLD}{CYAN}[{idx}] {name}{RESET} — {BOLD}{spec['title']}{RESET}")
+        print(f"      {DIM}{spec['description']}{RESET}")
+        print(f"      {BOLD}Initial:{RESET} {GREEN}{spec['initial']}{RESET}  •  {BOLD}Terminal:{RESET} {MAGENTA}{', '.join(spec['terminal'])}{RESET}")
+        print(f"      {BOLD}States ({len(spec['states'])}):{RESET} {DIM}{' → '.join(spec['states'])}{RESET}")
+        print(f"      {BOLD}Transitions:{RESET} {edge_count} verified edges\n")
+    print(f"{DIM}Tip: Run `{CYAN}how fsm <name> --mermaid{RESET}{DIM}` for Mermaid state diagrams, `{CYAN}how --trace <query>{RESET}{DIM}` for live transitions, or `{CYAN}how --json <query>{RESET}{DIM}` for agent JSON.{RESET}\n")
 
 
 def get_system_prompt(verbosity="normal", deep_mode=False, env_context=""):
@@ -752,6 +1210,7 @@ def get_active_environment_context(
     If `return_receipt=True`, returns `(context_str, receipt_str, os_prof, stack_info)`.
     """
     if no_context or os.environ.get("HOW_NO_CONTEXT") in ("1", "true", "yes"):
+        record_state_transition("context_permissions", "DISABLED_OFF", reason="--no-context")
         return ("", "", None, None) if return_receipt else ""
 
     if cfg is None:
@@ -760,6 +1219,11 @@ def get_active_environment_context(
     effective_mode = (context_mode_override or cfg.get("context_mode") or "careful").lower()
     if effective_mode == "yolo":
         force_context = True
+        record_state_transition("context_permissions", "ACTIVE_YOLO", reason="mode=yolo")
+    elif effective_mode == "off":
+        record_state_transition("context_permissions", "DISABLED_OFF", reason="mode=off")
+    else:
+        record_state_transition("context_permissions", "ACTIVE_CAREFUL", reason="mode=careful")
 
     if not force_context:
         cfg = ensure_context_permissions(cfg, context_mode_override=context_mode_override)
@@ -788,8 +1252,10 @@ def get_active_environment_context(
             lines.append(stack_info["summary"])
 
     ctx_str = "\n".join(lines)
+    receipt = format_context_read_receipt(os_prof=os_prof, stack_info=stack_info)
+    record_state_transition("context_permissions", "RECEIPT_EMITTED", reason=receipt)
+    set_trace_outcome(context_read=receipt)
     if return_receipt:
-        receipt = format_context_read_receipt(os_prof=os_prof, stack_info=stack_info)
         return ctx_str, receipt, os_prof, stack_info
     return ctx_str
 
@@ -2102,11 +2568,24 @@ def get_cached_response(query, model, verbosity, retention_seconds, prompt_hash=
                         "UPDATE response_cache SET expires_at = ?, hit_count = ?, last_hit_at = ? WHERE key = ?",
                         (new_expires_at, new_hits, now, cache_key),
                     )
+                    if new_hits >= 2 and seconds_since_prev <= REPEAT_MEMORY_WINDOW_SEC:
+                        record_state_transition(
+                            "cache_repeat_memory",
+                            "CACHE_HIT_REPEAT_WINDOW",
+                            reason=f"hit #{new_hits} ({seconds_since_prev}s ago)",
+                        )
+                    else:
+                        record_state_transition(
+                            "cache_repeat_memory",
+                            "CACHE_HIT_FRESH",
+                            reason=f"hit #{new_hits}",
+                        )
                     if return_hits:
                         return resp, created_at, new_hits, seconds_since_prev
                     return resp, created_at
     except Exception:
         pass
+    record_state_transition("cache_repeat_memory", "CACHE_MISS", reason="no active TTL entry")
     return None
 
 
@@ -2125,6 +2604,7 @@ def save_cached_response(query, model, verbosity, response_text, retention_secon
                     (key, query, model, verbosity, response, created_at, expires_at, hit_count, last_hit_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
             """, (cache_key, query, model, verbosity, response_text, now, expires_at, now))
+        record_state_transition("cache_repeat_memory", "CACHE_SAVED", reason=f"ttl={retention_seconds}s")
     except Exception:
         pass
 
@@ -2413,6 +2893,7 @@ def get_cli_help(cmd, return_source=False):
         return (None, None) if return_source else None
 
     if cmd == "omarchy" or cmd.startswith("omarchy-"):
+        record_state_transition("local_docs_rag", "OMARCHY_STATIC_HEADER", reason=f"omarchy:{cmd}")
         header = parse_omarchy_header(cmd_path)
         if header:
             res = f"=== Documentation header for Omarchy command '{cmd}' ===\n{header}"
@@ -2422,16 +2903,19 @@ def get_cli_help(cmd, return_source=False):
 
     t = get_tldr_content(cmd)
     if t:
+        record_state_transition("local_docs_rag", "LOCAL_TLDR_PAGE", reason=f"tldr:{cmd}")
         res = f"=== Official TLDR documentation for '{cmd}' ===\n{t}"
         return (res, f"tldr:{cmd}") if return_source else res
 
     m = get_man_summary(cmd)
     if m:
+        record_state_transition("local_docs_rag", "SYSTEM_MAN_SYNOPSIS", reason=f"man:{cmd}")
         res = f"=== System manual (man) for '{cmd}' ===\n{m}"
         return (res, f"man:{cmd}") if return_source else res
 
     h = run_sandboxed_help(cmd_path)
     if h:
+        record_state_transition("local_docs_rag", "BWRAP_SANDBOX_HELP", reason=f"bwrap-help:{cmd}")
         res = f"=== CLI help output for '{cmd}' ===\n{h}"
         return (res, f"bwrap-help:{cmd}") if return_source else res
 
@@ -2489,6 +2973,10 @@ def get_system_docs_context(query, return_sources=False):
             if len(found_docs) >= 2:
                 break
     joined = ("\n\n" + "\n\n".join(found_docs)) if found_docs else ""
+    if found_docs:
+        record_state_transition("local_docs_rag", "DOCS_ATTACHED", reason=", ".join(sources))
+    else:
+        record_state_transition("local_docs_rag", "NO_DOC_FOUND", reason="0 local docs matched")
     if return_sources:
         return joined, sources
     return joined
@@ -3045,6 +3533,7 @@ def split_shell_pipeline(command: str) -> list[tuple[str, str]]:
     tail = "".join(buf).strip()
     if tail:
         stages.append((tail, ""))
+    record_state_transition("shell_pipeline_lexer", "STAGES_SPLIT", reason=f"{len(stages)} stage(s)")
     return stages
 
 
@@ -3138,6 +3627,11 @@ def explain_command_anatomy(command: str) -> dict:
             "operator_meaning": op_descriptions.get(op_after, ""),
         })
 
+    record_state_transition(
+        "shell_pipeline_lexer",
+        "ANATOMY_RESOLVED",
+        reason=f"{len(parsed_stages)} stage(s), safety={safety['level']}",
+    )
     return {
         "command": cmd,
         "safety": safety,
@@ -3182,6 +3676,22 @@ def run_explain_command(args):
     anatomy = explain_command_anatomy(target_cmd)
     safety = anatomy["safety"]
     stages = anatomy["stages"]
+    record_state_transition(
+        "command_safety_lifecycle",
+        f"CLASSIFIED_{safety['level'].upper()}",
+        reason=safety["reason"],
+    )
+    record_state_transition("query_lifecycle", "EMITTED", reason="how explain")
+    set_trace_outcome(
+        intent="explain",
+        state="EXPLAINED",
+        query=source_query or target_cmd,
+        command=target_cmd,
+        explanation=f"{len(stages)} stage(s): {safety['reason']}",
+        safety=safety,
+        anatomy={"stages": stages},
+        source="offline:explain",
+    )
 
     print(f"\n{BOLD}{MAGENTA}◆ Command Anatomy & Safety Inspector{RESET}")
     if source_query:
@@ -3278,6 +3788,16 @@ def run_fix_command(args, opts):
     if diag["matched"]:
         fixed = diag["fixed_command"]
         safety = classify_command_safety(fixed)
+        set_trace_outcome(
+            intent="fix",
+            state="EMITTED",
+            query=last_query or target_cmd,
+            command=fixed,
+            explanation=diag["diagnosis"],
+            diagnosis=diag["diagnosis"],
+            safety=safety,
+            source="offline:fix-rules",
+        )
         print(f"\n{BOLD}{MAGENTA}◆ Instant Command Diagnosis & Repair{RESET}")
         if last_cmd:
             print(f"  {BOLD}Previous:{RESET}  {DIM}{last_cmd}{RESET}")
@@ -3330,6 +3850,26 @@ def display_suggested_command(command, query="", is_cached=False):
 def emit_command(cmd, query="", verbosity="normal", is_cached=False, raw_text=""):
     """Unified output handler for zero and non-zero verbosity across cache and live paths."""
     if cmd:
+        safety = classify_command_safety(cmd)
+        record_state_transition(
+            "command_safety_lifecycle",
+            f"CLASSIFIED_{safety['level'].upper()}",
+            reason=safety["reason"],
+        )
+        record_state_transition("command_safety_lifecycle", "PROPOSED_LOGGED", reason=cmd)
+        record_state_transition("query_lifecycle", "EMITTED", reason="command emitted")
+        expl = ""
+        if raw_text:
+            import re
+            expl = re.sub(r"```(?:bash|sh)?\s*\n.*?\n```", "", raw_text, flags=re.DOTALL).strip()
+        set_trace_outcome(
+            query=query,
+            command=cmd,
+            explanation=expl,
+            safety=safety,
+            cached=is_cached,
+            state="EMITTED",
+        )
         if verbosity == "zero":
             save_to_bash_history(cmd, query=query)
             log_command_proposal(query, cmd, executed=False)
@@ -3339,13 +3879,22 @@ def emit_command(cmd, query="", verbosity="normal", is_cached=False, raw_text=""
             print(f"{BOLD}{GREEN}{cmd}{RESET}{clip_hint}{cache_tag}\n")
         else:
             display_suggested_command(cmd, query=query, is_cached=is_cached)
-    elif verbosity == "zero":
-        cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
-        text = (raw_text or "").strip()
-        if cache_tag:
-            print(f"{text} {YELLOW}[cache]{RESET}\n")
-        else:
-            print(text + "\n")
+    else:
+        record_state_transition("query_lifecycle", "UNCERTAIN_IDK", reason="no executable command")
+        set_trace_outcome(
+            query=query,
+            command=None,
+            explanation=(raw_text or "I don't know").strip(),
+            cached=is_cached,
+            state="UNCERTAIN_IDK",
+        )
+        if verbosity == "zero":
+            cache_tag = f" {YELLOW}[cache]{RESET}" if is_cached else ""
+            text = (raw_text or "").strip()
+            if cache_tag:
+                print(f"{text} {YELLOW}[cache]{RESET}\n")
+            else:
+                print(text + "\n")
 
 
 def stream_groq_response(req, verbosity="normal", defer_uncertain=True):
@@ -3359,6 +3908,11 @@ def stream_groq_response(req, verbosity="normal", defer_uncertain=True):
 
     full_response = []
     flushed = False
+    record_state_transition(
+        "sse_stream",
+        "BUFFERING_WINDOW" if defer_uncertain else "STREAMING_LIVE",
+        reason="defer_uncertain<=28c" if defer_uncertain else "direct stream",
+    )
     with urllib.request.urlopen(req, timeout=30) as response:
         for line in response:
             line = line.decode("utf-8").strip()
@@ -3382,12 +3936,17 @@ def stream_groq_response(req, verbosity="normal", defer_uncertain=True):
                                 sys.stdout.write(clean_delta)
                                 sys.stdout.flush()
                             elif len(joined_so_far) > 28 or "```" in joined_so_far:
+                                record_state_transition("sse_stream", "STREAMING_LIVE", reason="uncertainty window cleared")
                                 sys.stdout.write(joined_so_far)
                                 sys.stdout.flush()
                                 flushed = True
                 except Exception:
                     pass
     final_text = strip_control_sequences("".join(full_response))
+    if defer_uncertain and is_uncertain_response(final_text) and not flushed:
+        record_state_transition("sse_stream", "SUPPRESSED_UNCERTAIN", reason="held uncertain output for escalation")
+    else:
+        record_state_transition("sse_stream", "COMPLETED", reason=f"{len(final_text)} chars")
     if verbosity != "zero":
         if flushed:
             print(f"{RESET}\n")
@@ -3474,9 +4033,13 @@ def classify_query_intent(query: str) -> str:
     if q_low.startswith(("explain ", "dissect ", "anatomy ")) or re.match(
         r"^what\s+does\s+[a-z0-9_\-\./]+\s+-", q_low
     ):
+        record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=explain")
+        set_trace_outcome(intent="explain", query=q)
         return "explain"
 
     if q_low in ("fix", "repair", "diagnose") or q_low.startswith(("fix ", "repair ", "diagnose ")):
+        record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=fix")
+        set_trace_outcome(intent="fix", query=q)
         return "fix"
     if any(
         err_k in q_low
@@ -3489,16 +4052,24 @@ def classify_query_intent(query: str) -> str:
             "command not found",
         )
     ) and not q_low.startswith(("how ", "to ")):
+        record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=fix")
+        set_trace_outcome(intent="fix", query=q)
         return "fix"
 
     if q_low.startswith(("where ", "where's ", "locate ", "path to ", "location of ")):
+        record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=where")
+        set_trace_outcome(intent="where", query=q)
         return "where"
     if re.search(
         r"\b(?:where\s+is|where\s+are|config\s+path|config\s+location|file\s+location|which\s+file\s+is)\b",
         q_low,
     ) and not q_low.startswith(("how to ", "how do i ")):
+        record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=where")
+        set_trace_outcome(intent="where", query=q)
         return "where"
 
+    record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=how")
+    set_trace_outcome(intent="how", query=q)
     return "how"
 
 
@@ -4563,8 +5134,15 @@ def run_offline_reflex(raw_query: str, verbosity: str = None) -> bool:
 
     res = lookup_system1_reflex(raw_query)
     elapsed_ms = (time.perf_counter() - t0) * 1000
+    record_state_transition(
+        "query_lifecycle",
+        "TIER0_REFLEX",
+        reason=res["source"] if res else "miss",
+    )
 
     if not res:
+        record_state_transition("query_lifecycle", "UNCERTAIN_IDK", reason="reflex miss")
+        set_trace_outcome(query=raw_query, command=None, explanation="I don't know", state="UNCERTAIN_IDK")
         if verbosity == "zero":
             print("I don't know\n")
         else:
@@ -4575,6 +5153,7 @@ def run_offline_reflex(raw_query: str, verbosity: str = None) -> bool:
     cmd = res["command"]
     explanation = res["explanation"]
     formatted_text = f"```bash\n{cmd}\n```\n{explanation}"
+    set_trace_outcome(source=res["source"], explanation=explanation)
 
     if verbosity != "zero":
         v_info = f", {verbosity}" if verbosity != "normal" else ""
@@ -5041,8 +5620,19 @@ def run_where_command(args, opts=None):
 
     targets = locate_where_targets(query)
     elapsed_ms = (time.perf_counter() - t0) * 1000
+    record_state_transition("query_lifecycle", "INTENT_CLASSIFIED", reason="intent=where")
 
     if not targets:
+        record_state_transition("query_lifecycle", "UNCERTAIN_IDK", reason="0 spatial targets")
+        set_trace_outcome(
+            intent="where",
+            state="UNCERTAIN_IDK",
+            query=query,
+            command=None,
+            explanation=f"No local path or standard config matched '{query}'.",
+            targets=[],
+            source="where:locator",
+        )
         if verbosity == "zero":
             print("I don't know\n")
         else:
@@ -5050,7 +5640,18 @@ def run_where_command(args, opts=None):
         return
 
     top = targets[0]
+    set_trace_outcome(
+        intent="where",
+        state="EMITTED",
+        query=query,
+        command=top["path"] if verbosity == "zero" else top["inspect_cmd"],
+        explanation=top["description"],
+        targets=targets,
+        safety=classify_command_safety(top["inspect_cmd"]),
+        source="where:locator",
+    )
     if verbosity == "zero":
+        record_state_transition("query_lifecycle", "EMITTED", reason=top["path"])
         copy_to_clipboard(top["path"])
         print(f"{top['path']}\n")
         return
@@ -5179,6 +5780,8 @@ def ask_groq(
         return
 
     if dry_run:
+        record_state_transition("query_lifecycle", "DRY_RUN_PREVIEW", reason="--dry-run")
+        set_trace_outcome(query=raw_query, state="DRY_RUN_PREVIEW", source="dry-run")
         print_context_dry_run_plan(query=raw_query)
         t_res = triage_query_with_groq(raw_query, env_context="", api_key=None, cfg=cfg)
         route = t_res.get("route", "fast")
@@ -5203,6 +5806,7 @@ def ask_groq(
         context_mode_override=context_mode_override,
         return_receipt=True,
     )
+    record_state_transition("query_lifecycle", "CONTEXT_RESOLVED", reason="os+stack checked")
     is_yolo = (context_mode_override == "yolo") or (cfg.get("context_mode") == "yolo")
     sys_prompt = get_system_prompt(verbosity, deep_mode=(think_mode == "deep"), env_context=env_context)
     prompt_hash = hashlib.sha256(sys_prompt.encode("utf-8")).hexdigest()[:16]
@@ -5213,6 +5817,9 @@ def ask_groq(
     bypass_cache = no_cache or env_no_cache or (retention_sec <= 0)
 
     cache_model_key = f"deep:{model}" if think_mode == "deep" else model
+    record_state_transition("query_lifecycle", "CACHE_LOOKUP", reason="bypass" if bypass_cache else cache_model_key)
+    if bypass_cache:
+        record_state_transition("cache_repeat_memory", "BYPASSED", reason="--no-cache or ttl=0")
 
     if not bypass_cache:
         cached = get_cached_response(
@@ -5300,6 +5907,12 @@ def ask_groq(
             return
         zs_prov = discover_zero_setup_provider(cfg, include_groq=False)
         if zs_prov:
+            record_state_transition(
+                "query_lifecycle",
+                "ZERO_SETUP_CLOUD",
+                reason=f"{zs_prov['label']} via {zs_prov['source']}",
+            )
+            set_trace_outcome(source=f"zero-setup:{zs_prov['label']}")
             if verbosity != "zero":
                 v_info = f", {verbosity}" if verbosity != "normal" else ""
                 print(
@@ -5348,6 +5961,8 @@ def ask_groq(
     if use_deep:
         deep_sys = get_system_prompt(verbosity, deep_mode=True, env_context=env_context)
         prov, d_mod, _ = resolve_deep_provider(cfg)
+        record_state_transition("query_lifecycle", "TRIAGE_ROUTED", reason=f"deep:{prov}:{d_mod}")
+        set_trace_outcome(source=f"deep:{prov}:{d_mod}")
         if verbosity != "zero":
             reason_tag = f" • {triage_reason}" if triage_reason else ""
             print(f"\n{CYAN}{BOLD}how ❯{RESET} {MAGENTA}[deep: {prov}:{d_mod}{reason_tag}]{RESET}")
@@ -5365,6 +5980,7 @@ def ask_groq(
             emit_command(cmd, query=raw_query, verbosity=verbosity, is_cached=False, raw_text=deep_text)
             return
 
+    record_state_transition("query_lifecycle", "TRIAGE_ROUTED", reason=f"fast:{model}")
     tried_models = set()
     initial_model = model
     current_model = model
@@ -5407,6 +6023,8 @@ def ask_groq(
             print()
 
         try:
+            record_state_transition("query_lifecycle", "FAST_LPU_STREAM", reason=f"groq:{current_model}")
+            set_trace_outcome(source=f"groq:{current_model}")
             full_text = stream_groq_response(req, verbosity=verbosity, defer_uncertain=not disable_escalation)
 
             # Intermediate Steps before returning "I don't know"
@@ -5415,6 +6033,7 @@ def ask_groq(
                 improved_q, refined_prompt, notes = improve_question_for_retry(
                     raw_query, env_context=env_context, api_key=api_key, cfg=cfg
                 )
+                record_state_transition("query_lifecycle", "PRE_IDK_STEP1_REFINED", reason=", ".join(notes[:2]))
                 if verbosity != "zero":
                     note_str = ", ".join(notes[:2])
                     q_diff = f' -> "{improved_q}"' if improved_q.lower() != raw_query.strip().lower() else ""
@@ -5444,6 +6063,8 @@ def ask_groq(
                 # Step 2: Reach out to a smarter reasoning model (on configured platform or Groq deep pool)
                 if is_uncertain_response(full_text):
                     prov, d_mod, _ = resolve_deep_provider(cfg)
+                    record_state_transition("query_lifecycle", "PRE_IDK_STEP2_ESCALATED", reason=f"{prov}:{d_mod}")
+                    set_trace_outcome(source=f"escalated:{prov}:{d_mod}")
                     if verbosity != "zero":
                         print(f"  {MAGENTA}🧠 Step 2/2 (Smarter Model Escalation):{RESET} {DIM}consulting {prov}:{d_mod}...{RESET}\n")
                     deep_sys = get_system_prompt(verbosity, deep_mode=True, env_context=env_context)
@@ -5500,6 +6121,11 @@ def ask_groq(
                 candidates = [m for m in fallback_pool if m not in tried_models]
                 if candidates:
                     next_model = candidates[0]
+                    record_state_transition(
+                        "query_lifecycle",
+                        "MODEL_FAILOVER",
+                        reason=f"{current_model} ({e.code}) -> {next_model}",
+                    )
                     print(f"\n{YELLOW}! Model '{current_model}' unavailable ({e.code}).{RESET}")
                     print(f"{CYAN}➜ Automatic fallback to model: '{next_model}'...{RESET}\n")
                     current_model = next_model
@@ -5578,7 +6204,19 @@ def show_unified_status():
         os_p = cfg.get("os_profile") or (detect_os_profile() if os_on else None)
         st_p = detect_local_stack() if stack_on else None
         print(f"  Read:        {DIM}{format_context_read_receipt(os_prof=os_p, stack_info=st_p)}{RESET}")
-    print(f"  Cache TTL:   {BOLD}{ret_str}{RESET}\n")
+    print(f"  Cache TTL:   {BOLD}{ret_str}{RESET}")
+    print(
+        f"  FSM Engine:  {GREEN}{len(STATE_MACHINES)} explicit state machines{RESET} "
+        f"{DIM}(inspect: `{CYAN}how fsm{RESET}{DIM}`, trace: `{CYAN}--trace{RESET}{DIM}`, agent: `{CYAN}--json{RESET}{DIM}`){RESET}\n"
+    )
+    record_state_transition("query_lifecycle", "EMITTED", reason="how status")
+    set_trace_outcome(
+        intent="status",
+        state="EMITTED",
+        command="how status",
+        explanation=f"how v{__version__} status dashboard",
+        source="status",
+    )
 
 
 def run_last_command(auto_yes=False, dry_run=False):
@@ -5593,6 +6231,12 @@ def run_last_command(auto_yes=False, dry_run=False):
         return
 
     safety = classify_command_safety(last_cmd)
+    record_state_transition(
+        "command_safety_lifecycle",
+        f"CLASSIFIED_{safety['level'].upper()}",
+        reason=safety["reason"],
+    )
+    record_state_transition("command_safety_lifecycle", "DRY_RUN_INSPECTED", reason=last_cmd)
     print(f"\n{BOLD}{MAGENTA}◆ Last Suggested Command{RESET}")
     if last_query:
         print(f"  Query:     {DIM}{last_query}{RESET}")
@@ -5600,6 +6244,14 @@ def run_last_command(auto_yes=False, dry_run=False):
     print(f"  {YELLOW}[dry-run]{RESET}  {BOLD}{GREEN}$ {last_cmd}{RESET}\n")
 
     if dry_run:
+        set_trace_outcome(
+            intent="run",
+            state="DRY_RUN_PREVIEW",
+            query=last_query,
+            command=last_cmd,
+            safety=safety,
+            source="run:dry-run",
+        )
         return
 
     is_destructive = safety.get("level") == "destructive"
@@ -5876,6 +6528,8 @@ def parse_cli_args(raw_args):
     no_escalate = False
     offline = False
     reflex_first = False
+    json_mode = os.environ.get("HOW_FORMAT", "").lower() == "json"
+    trace_mode = os.environ.get("HOW_TRACE", "") in ("1", "true", "yes")
     args = []
 
     if len(raw_args) == 1 and raw_args[0] in ("--version", "-V", "version"):
@@ -5918,6 +6572,12 @@ def parse_cli_args(raw_args):
             i += 1
         elif a_lower in ("--reflex", "--system1"):
             reflex_first = True
+            i += 1
+        elif a_lower in ("--json", "-j"):
+            json_mode = True
+            i += 1
+        elif a_lower in ("--trace", "--fsm-trace"):
+            trace_mode = True
             i += 1
         elif a_lower == "--no-context":
             no_context = True
@@ -6000,6 +6660,8 @@ def parse_cli_args(raw_args):
         "no_escalate": no_escalate,
         "offline": offline,
         "reflex_first": reflex_first,
+        "json_mode": json_mode,
+        "trace_mode": trace_mode,
     }
     return opts, args
 
@@ -6019,6 +6681,10 @@ def dispatch_subcommand(args, opts):
 
     if first == "status" and len(args) == 1:
         show_unified_status()
+        return True
+
+    if first in ("fsm", "states", "state-machine", "state-machines"):
+        run_fsm_command(args[1:], opts)
         return True
 
     if first in ("where", "locate"):
@@ -6196,35 +6862,61 @@ def main():
         print_help()
         sys.exit(0)
 
-    if dispatch_subcommand(args, opts):
+    reset_active_trace()
+    json_mode = bool(opts.get("json_mode", False))
+    trace_mode = bool(opts.get("trace_mode", False))
+
+    if args and args[0].lower() in ("fsm", "states", "state-machine", "state-machines"):
+        run_fsm_command(args[1:], opts)
         sys.exit(0)
 
-    query = " ".join(args)
-    intent = classify_query_intent(query)
-    if intent == "where":
-        run_where_command(args, opts)
-        sys.exit(0)
-    if intent == "fix":
-        run_fix_command(args, opts)
-        sys.exit(0)
-    if intent == "explain":
-        run_explain_command(args)
+    import io
+    import json
+    real_stdout = sys.stdout
+    json_buf = io.StringIO() if json_mode else None
+
+    try:
+        if json_mode:
+            sys.stdout = json_buf
+
+        if dispatch_subcommand(args, opts):
+            pass
+        else:
+            query = " ".join(args)
+            intent = classify_query_intent(query)
+            if intent == "where":
+                run_where_command(args, opts)
+            elif intent == "fix":
+                run_fix_command(args, opts)
+            elif intent == "explain":
+                run_explain_command(args)
+            else:
+                ask_groq(
+                    query,
+                    verbosity=opts.get("verbosity"),
+                    no_cache=opts.get("no_cache", False),
+                    custom_retention=opts.get("custom_retention"),
+                    think_mode=opts.get("think_mode"),
+                    no_context=opts.get("no_context", False),
+                    force_context=opts.get("force_context", False),
+                    context_mode_override=opts.get("context_mode_override"),
+                    dry_run=opts.get("dry_run", False),
+                    no_escalate=opts.get("no_escalate", False),
+                    offline=opts.get("offline", False),
+                    reflex_first=opts.get("reflex_first", False),
+                )
+    finally:
+        sys.stdout = real_stdout
+
+    if json_mode:
+        env_json = get_active_trace().to_agent_json()
+        print(json.dumps(env_json, indent=2))
         sys.exit(0)
 
-    ask_groq(
-        query,
-        verbosity=opts.get("verbosity"),
-        no_cache=opts.get("no_cache", False),
-        custom_retention=opts.get("custom_retention"),
-        think_mode=opts.get("think_mode"),
-        no_context=opts.get("no_context", False),
-        force_context=opts.get("force_context", False),
-        context_mode_override=opts.get("context_mode_override"),
-        dry_run=opts.get("dry_run", False),
-        no_escalate=opts.get("no_escalate", False),
-        offline=opts.get("offline", False),
-        reflex_first=opts.get("reflex_first", False),
-    )
+    if trace_mode:
+        print(get_active_trace().render_timeline())
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -490,6 +490,7 @@ fn main() {{
     }}
 
     if raw_args.iter().any(|a| a.eq_ignore_ascii_case("--dry-run"))
+        && !raw_args.iter().any(|a| matches!(a.to_lowercase().as_str(), "--json" | "-j" | "--trace" | "--fsm-trace"))
         && !raw_args[0].eq_ignore_ascii_case("run")
         && raw_args[0] != "!"
         && !raw_args[0].eq_ignore_ascii_case("fix")

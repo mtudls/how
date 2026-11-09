@@ -36,6 +36,8 @@ how auth login                  # Optional: add free Groq LPU key ($0, no card):
 | ✅ `LIVE` | **In-place shell prompt replacement (`Alt+H` keybinding)** | `eval "$(how shell-init bash)"` *(then type `# query` + `Alt+H`)* |
 | ✅ `LIVE` | **Offline `<3 ms` System-1 reflex (zero network)** | `how --offline to check memory usage` *(or `how reflex ...`)* |
 | ✅ `LIVE` | **Offline `<5 ms` spatial locator for configs, logs & ports** | `how where hyprland monitor config` *(or `how -0 where pacman.conf`)* |
+| ✅ `LIVE` | **Structured JSON envelope + FSM trace for AI agents (AX)** | `how --json to check memory usage` |
+| ✅ `LIVE` | **Visual microsecond state machine timeline (DX)** | `how --trace to find open ports` *(or `how fsm --mermaid`)* |
 | ✅ `LIVE` | **Offline `<1 ms` visual pipeline & flag breakdown** | `how explain` *(or `how explain "tar -xzvf a.tgz"`)* |
 | ✅ `LIVE` | **Instant command repair & error diagnostics** | `how fix` *(or `how fix "permission denied"`)* |
 | ✅ `LIVE` | **Run the last suggested command (with safety check)** | `how run` *(or `how !`)* |
@@ -78,7 +80,10 @@ how --no-cache <query>            # Ask fresh, ignoring saved answers
 how history [filter]              # View past suggested commands
 how bash-history [on|off]         # Append suggestions to ~/.bash_history
 
-# Build & self-test
+# Build, FSM inspection & self-test
+how fsm [name|--mermaid|--json]   # Inspect the 8 explicit finite state machines powering `how`
+how --trace <query>               # Print microsecond state transition timeline (DX)
+how --json <query>                # Emit deterministic JSON envelope + trace for AI agents (AX)
 how build                         # Rebuild native Rust binary from Python source
 how test [--stats]                # Run self-test and speed benchmark
 ```
