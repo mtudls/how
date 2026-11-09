@@ -479,6 +479,9 @@ def test_product_convergence_and_wow_ux():
     w_targets = how.locate_where_targets("where is hyprland monitor config")
     assert w_targets and w_targets[0]["path"].endswith(".config/hypr/monitors.conf")
     assert not hasattr(how, "STATE_MACHINES") and not hasattr(how, "_ACTIVE_TRACE")
+    manifest_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "manifest.json"))
+    with open(manifest_path, "r", encoding="utf-8") as mf:
+        assert json.load(mf).get("version") == how.__version__
     print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms), `how where` locator & stateless invariants verified.")
     scores.append(100)
 
