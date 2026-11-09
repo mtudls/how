@@ -478,13 +478,8 @@ def test_product_convergence_and_wow_ux():
 
     w_targets = how.locate_where_targets("where is hyprland monitor config")
     assert w_targets and w_targets[0]["path"].endswith(".config/hypr/monitors.conf")
-    assert len(how.STATE_MACHINES) == 8
-    tr_vv = how.reset_active_trace()
-    how.classify_query_intent("to check memory usage")
-    how.record_state_transition("query_lifecycle", "TIER0_REFLEX", reason="vv-test")
-    how.record_state_transition("query_lifecycle", "EMITTED", reason="vv-test")
-    assert all(e["valid"] for e in tr_vv.events)
-    print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms), `how where` locator & 8 explicit FSMs verified.")
+    assert not hasattr(how, "STATE_MACHINES") and not hasattr(how, "_ACTIVE_TRACE")
+    print(f"  ✓ Tier-0 System-1 offline reflex ({ref_ms:.2f} ms), `how where` locator & stateless invariants verified.")
     scores.append(100)
 
     avg_score = sum(scores) / len(scores)

@@ -894,43 +894,92 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertEqual(proc_how.returncode, 0)
         self.assertEqual(proc_how.stdout.strip(), "/etc/pacman.conf")
 
-    def test_explicit_state_machines_ux_dx_ax(self):
-        """All 8 explicit state machines validate transitions and power UX breadcrumbs, DX `--trace`, and AX `--json`."""
-        import json
+    def test_no_implicit_state_machines_stateless_ux_dx_ax(self):
+        """Verifies all unwanted implicit state machines are eliminated across UX, DX, and AX."""
+        import contextlib
+        import io
 
-        # 1. All 8 state machines exist and have valid initial/terminal states and transition edges
-        expected_machines = {
-            "query_lifecycle",
-            "sse_stream",
-            "context_permissions",
-            "command_safety_lifecycle",
-            "cache_repeat_memory",
-            "shell_pipeline_lexer",
-            "local_docs_rag",
-            "closed_loop_asi",
-        }
-        self.assertEqual(set(self.how.STATE_MACHINES.keys()), expected_machines)
-        for name, spec in self.how.STATE_MACHINES.items():
-            self.assertIn(spec["initial"], spec["states"], f"{name} initial state must be in states")
-            for term in spec["terminal"]:
-                self.assertIn(term, spec["states"], f"{name} terminal state {term} must be in states")
-            for src, dsts in spec["transitions"].items():
-                self.assertIn(src, spec["states"])
-                for dst in dsts:
-                    self.assertIn(dst, spec["states"])
-                    self.assertTrue(self.how.is_valid_state_transition(name, src, dst))
+        # 1. No global mutable trace singletons or FSM registries
+        self.assertFalse(hasattr(self.how, "STATE_MACHINES"))
+        self.assertFalse(hasattr(self.how, "_ACTIVE_TRACE"))
 
-        # 2. ExecutionTrace records valid transitions across machines and formats UX breadcrumb & DX timeline
-        tr = self.how.reset_active_trace()
-        self.how.classify_query_intent("to check memory usage")
-        self.how.run_offline_reflex("to check memory usage", verbosity="zero")
-        self.assertEqual(tr.current_states["query_lifecycle"], "EMITTED")
-        self.assertEqual(tr.current_states["command_safety_lifecycle"], "PROPOSED_LOGGED")
-        self.assertTrue(all(ev["valid"] for ev in tr.events), f"Invalid transition in {tr.events}")
-        self.assertIn("intent:how", tr.route_breadcrumb())
-        self.assertIn("Explicit State Machine Trace", tr.render_timeline())
+        # 2. First-run TTY query does NOT hijack stdin with the 5-step context wizard or mutate config.json
+        self.how.save_config({"model": "openai/gpt-oss-120b"})
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            with patch("builtins.input", side_effect=AssertionError("Must not prompt on default query")):
+                cfg_after = self.how.ensure_context_permissions(cfg=self.how.load_config())
+                self.assertFalse(cfg_after.get("discover_os"))
+                self.assertFalse(cfg_after.get("discover_stack"))
+                self.assertNotIn("context_prompted", self.how.load_config())
 
-        # 3. AX `--json` mode emits deterministic JSON envelope with command, safety, anatomy, and trace
+        # 3. Repeat cached query in a TTY does NOT block on stdin (`prompt_repeat_question_memory` not called in ask_groq)
+        self.how.save_cached_response(
+            "to list open ports",
+            "openai/gpt-oss-120b",
+            "normal",
+            "```bash\nss -tulpn\n```\nLists listening sockets.",
+            3600,
+        )
+        with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
+            with patch("builtins.input", side_effect=AssertionError("Cached repeat query must never hijack stdin")):
+                buf1 = io.StringIO()
+                buf2 = io.StringIO()
+                with contextlib.redirect_stdout(buf1):
+                    self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
+                with contextlib.redirect_stdout(buf2):
+                    self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
+                self.assertIn("ss -tulpn", buf1.getvalue())
+                self.assertIn("ss -tulpn", buf2.getvalue())
+
+        # 4. Transient HTTP 503 failover does NOT overwrite the user's configured model in config.json
+        self.how.save_config({"model": "custom/user-fast-model", "discover_os": False, "discover_stack": False})
+
+        class FakeSSE:
+            def __enter__(self):
+                return iter([
+                    b'data: {"choices": [{"delta": {"content": "```bash\\necho failover-ok\\n```"}}]}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def __exit__(self, *args):
+                pass
+
+        call_idx = {"n": 0}
+
+        def fake_failover_urlopen(req, timeout=30):
+            call_idx["n"] += 1
+            if call_idx["n"] == 1:
+                raise urllib.error.HTTPError(
+                    url="https://api.groq.com",
+                    code=503,
+                    msg="Service Unavailable",
+                    hdrs={},
+                    fp=MagicMock(read=lambda: b'{"error": {"message": "overloaded"}}'),
+                )
+            return FakeSSE()
+
+        with patch("urllib.request.urlopen", side_effect=fake_failover_urlopen):
+            with patch.object(self.how, "get_api_key", return_value="gsk_fake_key_12345"):
+                with patch.object(self.how, "require_api_key", return_value="gsk_fake_key_12345"):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.how.ask_groq("how to test transient 503", verbosity="zero", no_cache=True)
+        self.assertEqual(
+            self.how.load_config().get("model"),
+            "custom/user-fast-model",
+            "Transient model failover must never mutate config.json",
+        )
+
+        # 5. Episodic history requires exact normalized query match (no fuzzy cross-query shadowing)
+        os.makedirs(os.path.dirname(self.how.COMMANDS_LOG), exist_ok=True)
+        with open(self.how.COMMANDS_LOG, "w", encoding="utf-8") as f:
+            f.write('[2026-11-09 00:00:00] [EXECUTED] Query: "how to restart nginx service" | Command: sudo systemctl restart nginx\n')
+        self.assertIsNotNone(self.how.lookup_episodic_history("how to restart nginx service"))
+        self.assertIsNone(
+            self.how.lookup_episodic_history("how to status nginx service"),
+            "Fuzzy episodic history must not shadow a different query",
+        )
+
+        # 6. Stateless AX `--json` mode emits deterministic JSON
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         how_path = os.path.join(repo_root, "how")
         proc_json = subprocess.run(
@@ -943,16 +992,8 @@ class TestSafetyAndSandbox(unittest.TestCase):
         payload = json.loads(proc_json.stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["intent"], "how")
-        self.assertEqual(payload["state"], "EMITTED")
         self.assertEqual(payload["command"], "free -h")
         self.assertEqual(payload["safety"]["level"], "safe")
-        self.assertGreaterEqual(len(payload["trace"]), 3)
-
-        # 4. DX `how fsm --mermaid` outputs valid Mermaid stateDiagram-v2
-        mermaid_out = self.how.format_fsm_mermaid("query_lifecycle")
-        self.assertIn("stateDiagram-v2", mermaid_out)
-        self.assertIn("[*] --> INIT", mermaid_out)
-        self.assertIn("EMITTED --> [*]", mermaid_out)
 
     def test_closed_loop_asi_search_replace_and_gate_rollback(self):
         """scripts/ai_architect_review.py applies valid SEARCH/REPLACE blocks and rolls back on gate failure."""
