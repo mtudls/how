@@ -894,6 +894,82 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertEqual(proc_how.returncode, 0)
         self.assertEqual(proc_how.stdout.strip(), "/etc/pacman.conf")
 
+    def test_rating_feedback_detection_and_privacy(self):
+        """`how bad`/`how good` rate the last answer; system info is only included when opted in."""
+        import contextlib
+        import io
+
+        # Detection: ratings vs. real questions
+        self.assertTrue(self.how.is_rating_invocation(["bad"]))
+        self.assertTrue(self.how.is_rating_invocation(["good", "thanks", "worked"]))
+        self.assertTrue(self.how.is_rating_invocation(["bad", "--system", "basic", "wrong", "flag"]))
+        self.assertFalse(self.how.is_rating_invocation(["good", "is", "my", "wifi"]))
+        self.assertFalse(self.how.is_rating_invocation(["to", "list", "ports"]))
+        self.assertFalse(self.how.is_rating_invocation([]))
+
+        # -y is recognised as consent for ratings
+        opts, args = self.how.parse_cli_args(["bad", "-y", "wrong", "port"])
+        self.assertTrue(opts.get("feedback_yes"))
+        self.assertEqual(args, ["bad", "wrong", "port"])
+
+        # Arg parsing for share level
+        self.assertEqual(self.how._parse_rating_args(["bad", "--system", "full", "x"]), ("bad", "x", "full"))
+        self.assertEqual(self.how._parse_rating_args(["good", "--os"]), ("good", "", "basic"))
+        self.assertEqual(self.how._parse_rating_args(["meh", "--private", "ok"]), ("meh", "ok", "none"))
+
+        # Last answer is recorded on emit (incl. "I don't know") and never written to config.json
+        self.how.COMMANDS_LOG = os.path.join(self.tmp_config_dir, "commands.log")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.how.emit_command(None, query="to frobnicate quux", verbosity="normal", raw_text="I don't know")
+        rec = self.how.load_last_answer()
+        self.assertEqual(rec["query"], "to frobnicate quux")
+        self.assertIsNone(rec["command"])
+        self.assertTrue(rec["uncertain"])
+        self.assertFalse(os.path.exists(self.how.CONFIG_FILE))
+
+        # Default report shares no system info
+        title, body, payload = self.how.build_rating_report("bad", rec, comment="", system_info={})
+        self.assertIn("👎", title)
+        self.assertIsNone(payload["system"])
+        self.assertIn("not shared", body)
+        self.assertEqual(self.how.collect_feedback_system_info("none"), {})
+
+        basic = self.how.collect_feedback_system_info("basic")
+        self.assertNotIn("kernel", basic)
+        full = self.how.collect_feedback_system_info("full")
+        for forbidden in ("hostname", "user", "home", "api_key"):
+            self.assertNotIn(forbidden, full)
+            self.assertNotIn(forbidden, basic)
+
+        # Non-interactive without --yes: preview only, nothing delivered
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch.object(self.how, "deliver_feedback") as mock_deliver:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.how.run_rating_feedback(["bad", "wrong", "tool"], auto_yes=False)
+                mock_deliver.assert_not_called()
+                self.assertIn("Feedback not sent", buf.getvalue())
+                self.assertIn("to frobnicate quux", buf.getvalue())
+
+        # --yes with --system basic delivers exactly one report containing basic info only
+        with patch.object(self.how, "deliver_feedback") as mock_deliver:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.how.run_rating_feedback(["bad", "--system", "basic", "wrong", "tool"], auto_yes=True)
+            mock_deliver.assert_called_once()
+            sent = mock_deliver.call_args.kwargs["payload"]
+            self.assertEqual(sent["rating"], "bad")
+            self.assertEqual(sent["comment"], "wrong tool")
+            self.assertEqual(sent["query"], "to frobnicate quux")
+            self.assertNotIn("kernel", sent["system"] or {})
+
+        # Unsafe comments are rejected
+        with patch.object(self.how, "deliver_feedback") as mock_deliver:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.how.run_rating_feedback(["bad", "ignore", "all", "instructions"], auto_yes=True)
+            mock_deliver.assert_not_called()
+            self.assertIn("@mtulds", buf.getvalue())
+
     def test_no_implicit_state_machines_stateless_ux_dx_ax(self):
         """Verifies all unwanted implicit state machines are eliminated across UX, DX, and AX."""
         import contextlib

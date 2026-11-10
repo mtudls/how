@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # omarchy:summary=Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack
 # omarchy:group=agent
-# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--json] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | test
+# omarchy:args=[-0|--low] [-t|--think|--fast] [--offline|--reflex] [--json] [--no-cache] [--no-context] [to] <query...> | where | reflex | explain | fix | run | context | triage | status | model | auth | cache | history | feedback | bad | good | test
 # omarchy:examples=how to ping google | how -0 to find largest files | how where hyprland monitors | how --json to check memory usage | how explain "tar -xzvf a.tgz" | how fix | how run
 # omarchy:aliases=howto
 """
@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -84,6 +84,7 @@ Commands:
   {CYAN}verbosity{RESET} [zero|low|normal]            Default output verbosity
   {CYAN}history{RESET} [filter]                       Recent command suggestions (see also: {CYAN}bash-history{RESET})
   {CYAN}feedback{RESET} [--yes] [text...]             Send quick feedback directly from terminal
+  {CYAN}bad{RESET}|{CYAN}good{RESET}|{CYAN}meh{RESET} [--system none|basic|full] [note]  Rate the last answer and send it for triage
   {CYAN}test{RESET} [--docker|--stats]                Run self-test & A/B benchmark matrix
 
 Options:
@@ -3292,6 +3293,51 @@ def run_fix_command(args, opts):
     )
 
 
+def last_answer_path() -> str:
+    """Path of the explicit last-answer record used by `how bad` / `how good` (never config.json)."""
+    return os.path.join(CONFIG_DIR, "last_answer.json")
+
+
+def record_last_answer(query, command, raw_text="", source="live"):
+    """Writes a small, user-visible record of the most recent answer so it can be rated later."""
+    if not query:
+        return
+    import json
+    import time
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        excerpt = strip_control_sequences(strip_think_blocks(raw_text or "")).strip()
+        rec = {
+            "query": query.strip(),
+            "command": (command or "").strip() or None,
+            "answer": excerpt[:600],
+            "uncertain": is_uncertain_response(raw_text) and not command,
+            "source": source,
+            "at": time.time(),
+            "version": __version__,
+        }
+        with open(last_answer_path(), "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_last_answer() -> dict:
+    """Returns the last-answer record, falling back to the last command in commands.log."""
+    import json
+    try:
+        with open(last_answer_path(), "r", encoding="utf-8") as f:
+            rec = json.load(f)
+            if rec.get("query"):
+                return rec
+    except Exception:
+        pass
+    last_cmd, last_query = get_last_suggested_command()
+    if last_query or last_cmd:
+        return {"query": last_query, "command": last_cmd or None, "answer": "", "at": None, "source": "commands.log"}
+    return {}
+
+
 def display_suggested_command(command, query="", is_cached=False):
     """Displays suggested command with Traffic-Light Safety Badge, copies to clipboard, and logs in history."""
     cmd = command.strip()
@@ -3307,13 +3353,15 @@ def display_suggested_command(command, query="", is_cached=False):
 
     print(
         f"{BOLD}{CYAN}Suggested command:{RESET} [{safety['badge']}]{cache_tag}{clip_hint} "
-        f"{DIM}• run: {CYAN}how run{RESET} {DIM}• dissect: {CYAN}how explain{RESET}"
+        f"{DIM}• run: {CYAN}how run{RESET} {DIM}• dissect: {CYAN}how explain{RESET} "
+        f"{DIM}• rate: {CYAN}how good{RESET}{DIM}/{CYAN}bad{RESET}"
     )
     print(f"  {BOLD}{GREEN}{cmd}{RESET}\n")
 
 
 def emit_command(cmd, query="", verbosity="normal", is_cached=False, raw_text=""):
     """Unified output handler for zero and non-zero verbosity across cache and live paths."""
+    record_last_answer(query, cmd, raw_text, source="cache" if is_cached else "live")
     if cmd:
         if verbosity == "zero":
             save_to_bash_history(cmd, query=query)
@@ -4539,6 +4587,7 @@ def run_offline_reflex(raw_query: str, verbosity: str = None) -> bool:
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     if not res:
+        record_last_answer(raw_query, None, "I don't know", source="reflex")
         if verbosity == "zero":
             print("I don't know\n")
         else:
@@ -5639,7 +5688,6 @@ def check_feedback_safety(message: str) -> tuple[bool, str]:
 
 def send_terminal_feedback(message="", auto_yes=False):
     """Submits lightweight feedback from the terminal with safety checks and explicit consent (stateless)."""
-    import json
     import time
 
     if not message:
@@ -5684,18 +5732,27 @@ def send_terminal_feedback(message="", auto_yes=False):
             print(f"\n{DIM}Feedback cancelled.{RESET}\n")
             return
 
+    deliver_feedback(
+        title=issue_title,
+        body=message,
+        payload={"feedback": message, "timestamp": now, "version": __version__, "os": sys.platform},
+        cfg=cfg,
+        browser_query=message,
+    )
+
+
+def deliver_feedback(title, body, payload, cfg=None, browser_query="", browser_body=None):
+    """Delivers feedback for triage: webhook (if configured) -> `gh issue create` -> browser pre-filled issue."""
+    import json
+    cfg = cfg if cfg is not None else load_config()
+    repo_target = "mdsyseng/how"
+
     webhook_url = os.environ.get("HOW_FEEDBACK_WEBHOOK") or cfg.get("feedback_webhook")
     if webhook_url:
         import urllib.request
-        payload = json.dumps({
-            "feedback": message,
-            "timestamp": now,
-            "version": __version__,
-            "os": sys.platform,
-        }).encode("utf-8")
         req = urllib.request.Request(
             webhook_url,
-            data=payload,
+            data=json.dumps(payload).encode("utf-8"),
             headers={**COMMON_HEADERS, "Content-Type": "application/json"},
         )
         print(f"{DIM}Sending feedback...{RESET} ", end="", flush=True)
@@ -5703,14 +5760,14 @@ def send_terminal_feedback(message="", auto_yes=False):
             with urllib.request.urlopen(req, timeout=4) as resp:
                 if resp.status in (200, 201, 204):
                     print(f"{GREEN}✓ Sent! Thank you.{RESET}\n")
-                    return
+                    return True
         except Exception:
             print(f"{YELLOW}(webhook unavailable){RESET}")
 
     import subprocess
     try:
         proc = subprocess.run(
-            ["gh", "issue", "create", "--repo", repo_target, "--title", issue_title, "--body", message, "--label", "feedback"],
+            ["gh", "issue", "create", "--repo", repo_target, "--title", title, "--body", body, "--label", "feedback"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -5720,18 +5777,230 @@ def send_terminal_feedback(message="", auto_yes=False):
         if proc.returncode == 0:
             issue_url = proc.stdout.strip()
             print(f"{GREEN}✓ Issue created directly from terminal:{RESET} {issue_url}\n")
-            return
+            return True
     except Exception:
         pass
 
-    open_feedback_url(message)
+    open_feedback_url(browser_query, title=title if browser_body else None, body=browser_body)
+    return False
 
 
-def open_feedback_url(query=""):
+# -----------------------------------------------------------------------------
+# Answer Rating Feedback (`how bad` / `how good` / `how meh`) -> confirm -> triage
+# -----------------------------------------------------------------------------
+
+RATING_WORDS = {
+    "bad": "bad", "wrong": "bad", "nope": "bad", "-1": "bad", "👎": "bad", "useless": "bad",
+    "good": "good", "great": "good", "+1": "good", "👍": "good", "thanks": "good", "perfect": "good",
+    "meh": "meh", "partial": "meh", "almost": "meh",
+}
+RATING_BADGES = {"bad": "👎 bad", "good": "👍 good", "meh": "🤷 meh"}
+# Words that turn `how good ...` / `how bad ...` into a real question instead of a rating.
+_RATING_QUESTION_CONTINUATIONS = {
+    "is", "are", "was", "were", "does", "do", "did", "to", "at", "for", "in", "way", "ways",
+    "practice", "practices", "idea", "ideas", "habit", "habits", "can", "should", "would",
+}
+SYSTEM_SHARE_LEVELS = ("none", "basic", "full")
+
+
+def is_rating_invocation(args) -> bool:
+    """True when argv is a rating of the last answer (e.g. `how bad`, `how good thanks`), not a question."""
+    words = [a for a in args if not a.startswith("--")]
+    if not words or words[0].lower() not in RATING_WORDS:
+        return False
+    return len(words) == 1 or words[1].lower() not in _RATING_QUESTION_CONTINUATIONS
+
+
+def collect_feedback_system_info(level: str) -> dict:
+    """
+    Collects ONLY the system info the user opted into. Never includes hostname, username,
+    home paths, environment variables, API keys, or file contents.
+    """
+    if level not in ("basic", "full"):
+        return {}
+    prof = detect_os_profile()
+    info = {
+        "os": prof.get("os_name", sys.platform) + (f" {prof['os_version']}" if prof.get("os_version") else ""),
+        "omarchy": bool(prof.get("omarchy")),
+        "desktop": prof.get("desktop", ""),
+        "shell": prof.get("shell", ""),
+    }
+    if level == "full":
+        cfg = load_config()
+        info["kernel"] = prof.get("kernel", "")
+        info["pkg_managers"] = ", ".join(prof.get("pkg_managers", []))
+        try:
+            stack = detect_local_stack()
+            info["project_stack"] = ", ".join(stack.get("tools", [])[:8]) if isinstance(stack, dict) else ""
+        except Exception:
+            info["project_stack"] = ""
+        info["fast_model"] = cfg.get("model", DEFAULT_MODEL)
+        info["verbosity"] = cfg.get("verbosity", DEFAULT_VERBOSITY)
+        info["engine"] = "python3" if "__file__" in globals() else "native"
+    return {k: v for k, v in info.items() if v not in ("", None)}
+
+
+def build_rating_report(rating, rec, comment="", system_info=None):
+    """Builds (title, markdown_body, json_payload) for a rating report. Pure function."""
+    import time
+    query = (rec.get("query") or "").strip()
+    cmd = rec.get("command") or ""
+    badge = RATING_BADGES.get(rating, rating)
+    title = f"[{badge}] how {query[:60]}" if query else f"[{badge}] answer feedback"
+
+    lines = [f"### Rating\n{badge}", f"### Query\n`how {query}`" if query else ""]
+    if cmd:
+        lines.append(f"### Suggested command\n```bash\n{cmd}\n```")
+    elif rec.get("answer"):
+        lines.append(f"### Answer\n```\n{rec['answer'][:400]}\n```")
+    if comment:
+        lines.append(f"### What was wrong / notes\n{comment}")
+    if system_info:
+        lines.append("### System (shared by user)\n" + "\n".join(f"- **{k}**: {v}" for k, v in system_info.items()))
+    else:
+        lines.append("### System\n_not shared_")
+    lines.append(f"_how v{__version__} • source: {rec.get('source', '-')}_")
+    body = "\n\n".join(x for x in lines if x)
+
+    payload = {
+        "kind": "rating",
+        "rating": rating,
+        "query": query,
+        "command": cmd or None,
+        "answer_excerpt": (rec.get("answer") or "")[:400] if not cmd else None,
+        "comment": comment or None,
+        "system": system_info or None,
+        "version": __version__,
+        "timestamp": time.time(),
+    }
+    return title, body, payload
+
+
+def _parse_rating_args(args):
+    """Extracts (rating, comment, share_level_or_None) from `how bad [--system none|basic|full] [comment...]`."""
+    rating = RATING_WORDS[args[0].lower()] if args and args[0].lower() in RATING_WORDS else "bad"
+    share = None
+    rest = []
+    i = 1
+    while i < len(args):
+        a = args[i]
+        al = a.lower()
+        if al in ("--system", "--share") and i + 1 < len(args) and args[i + 1].lower() in SYSTEM_SHARE_LEVELS:
+            share = args[i + 1].lower()
+            i += 2
+            continue
+        if al.startswith(("--system=", "--share=")) and al.split("=", 1)[1] in SYSTEM_SHARE_LEVELS:
+            share = al.split("=", 1)[1]
+        elif al in ("--os", "--basic"):
+            share = "basic"
+        elif al in ("--full", "--all-info"):
+            share = "full"
+        elif al in ("--no-system", "--private", "--anonymous"):
+            share = "none"
+        else:
+            rest.append(a)
+        i += 1
+    return rating, " ".join(rest).strip(), share
+
+
+def run_rating_feedback(args, auto_yes=False):
+    """
+    Handles `how bad|good|meh [comment...]`:
+    1. Shows which answer is being rated and asks "Did you mean this answer?"
+    2. Optionally asks what was wrong.
+    3. Asks how much system info to include (none / basic / full) — default: none.
+    4. Shows the exact report and sends it for triage only after explicit consent.
+    """
+    import time
+    rating, comment, share = _parse_rating_args(args)
+    badge = RATING_BADGES[rating]
+    rec = load_last_answer()
+    interactive = sys.stdin.isatty() and not auto_yes and os.environ.get("HOW_NO_BROWSER") != "1"
+
+    if not rec.get("query"):
+        print(f"\n{YELLOW}! No recent `how` answer found to rate.{RESET}")
+        print(f"{DIM}Ask something first (e.g. {CYAN}how to list open ports{RESET}{DIM}), "
+              f"or send general feedback: {CYAN}how feedback \"...\"{RESET}\n")
+        return
+
+    age = ""
+    if rec.get("at"):
+        age_sec = max(0, int(time.time() - float(rec["at"])))
+        age = f" {DIM}({format_retention_short(age_sec)} ago){RESET}" if age_sec else f" {DIM}(just now){RESET}"
+
+    print(f"\n{BOLD}{MAGENTA}◆ Rate last answer {badge}{RESET}")
+    print(f"  Asked:   {BOLD}how {rec['query']}{RESET}{age}")
+    if rec.get("command"):
+        print(f"  Answer:  {GREEN}{rec['command']}{RESET}")
+    elif rec.get("answer"):
+        print(f"  Answer:  {DIM}{rec['answer'].splitlines()[0][:100]}{RESET}")
+    print()
+
+    if interactive:
+        try:
+            ans = input(f"{CYAN}Did you mean this answer? [Y/n]:{RESET} ").strip().lower()
+            if ans in ("n", "no"):
+                print(f"{DIM}Cancelled. To rate something else, re-ask it and run {CYAN}how {args[0]}{RESET}{DIM} right after.{RESET}\n")
+                return
+            if not comment and rating != "good":
+                comment = input(f"{CYAN}What was wrong? (optional, Enter to skip):{RESET} ").strip()
+            if share is None:
+                print(f"\n{BOLD}Include system info to help triage?{RESET}")
+                print(f"  {BOLD}n{RESET}) none {DIM}(default — only query, answer, rating, how version){RESET}")
+                print(f"  {BOLD}b{RESET}) basic {DIM}(OS, desktop/session, shell){RESET}")
+                print(f"  {BOLD}f{RESET}) full {DIM}(basic + kernel, package managers, project stack, model){RESET}")
+                pick = input(f"{CYAN}Choice [n/b/f]:{RESET} ").strip().lower()
+                share = {"b": "basic", "basic": "basic", "f": "full", "full": "full"}.get(pick, "none")
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{DIM}Feedback cancelled.{RESET}\n")
+            return
+
+    share = share or "none"
+    if comment:
+        ok, reason = check_feedback_safety(comment)
+        if not ok:
+            print(f"\n{YELLOW}Sorry, this feedback could not be accepted automatically ({reason}).{RESET}")
+            print(f"{BOLD}Please share your feedback or problem directly via X (Twitter) with {CYAN}@mtulds{RESET}.\n")
+            return
+
+    sys_info = collect_feedback_system_info(share)
+    title, body, payload = build_rating_report(rating, rec, comment=comment, system_info=sys_info)
+
+    print(f"\n{BOLD}{MAGENTA}◆ Feedback Preview{RESET} {DIM}(exactly what will be sent){RESET}")
+    print(f"  Title:   {BOLD}{title}{RESET}")
+    if comment:
+        print(f"  Comment: {comment}")
+    if sys_info:
+        print(f"  System:  {DIM}{', '.join(f'{k}={v}' for k, v in sys_info.items())}{RESET}")
+    else:
+        print(f"  System:  {DIM}not shared{RESET}")
+    print()
+
+    if not auto_yes:
+        if not interactive:
+            hint_c = f' "{comment}"' if comment else ""
+            print(f"{YELLOW}! Non-interactive shell detected. Feedback not sent.{RESET}")
+            print(f"{DIM}To send non-interactively, run:{RESET} "
+                  f"{CYAN}how {args[0]} --yes --system {share}{hint_c}{RESET}\n")
+            return
+        try:
+            if input(f"{CYAN}Send for triage? [y/N]:{RESET} ").strip().lower() not in ("y", "yes"):
+                print(f"{DIM}Feedback cancelled.{RESET}\n")
+                return
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{DIM}Feedback cancelled.{RESET}\n")
+            return
+
+    deliver_feedback(title=title, body=body, payload=payload, browser_query=rec["query"], browser_body=body)
+
+
+def open_feedback_url(query="", title=None, body=None):
     """Opens GitHub issue creation page in browser."""
     import urllib.parse
     base_url = "https://github.com/mdsyseng/how/issues/new"
-    if query:
+    if title and body:
+        url = f"{base_url}?{urllib.parse.urlencode({'title': title, 'body': body[:6000]})}"
+    elif query:
         title = f"Feedback: {query[:50]}"
         body = f"### Query / Context\n`how {query}`\n\n### What happened / What could be better?\n"
         params = urllib.parse.urlencode({"title": title, "body": body})
@@ -5814,6 +6083,8 @@ def parse_cli_args(raw_args):
     if any(a.lower() in ("--feedback", "--bug", "--issue", "--report") for a in raw_args):
         is_feedback_context = True
     elif non_flags and non_flags[0] in ("feedback", "bug", "report", "issue", "run", "!"):
+        is_feedback_context = True
+    elif is_rating_invocation(raw_args):
         is_feedback_context = True
 
     i = 0
@@ -6012,6 +6283,10 @@ def dispatch_subcommand(args, opts):
     if first in ("feedback", "bug", "report", "issue"):
         msg = " ".join(args[1:])
         send_terminal_feedback(msg, auto_yes=opts.get("feedback_yes", False))
+        return True
+
+    if is_rating_invocation(args):
+        run_rating_feedback(args, auto_yes=opts.get("feedback_yes", False))
         return True
 
     if opts.get("feedback_mode"):
