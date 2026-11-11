@@ -1,0 +1,46 @@
+# how — project tasks.
+#
+#   mise tasks                  list everything below
+#   mise run test               run all tests
+#   mise run build              build the native binary ./how-bin
+#   mise run install            install `how` on this machine
+#   mise run release 0.6.6      bump version, test, commit, tag, push (CI publishes the release)
+
+[tasks.test]
+description = "Run all tests"
+run = "python3 -m unittest discover -s tests"
+
+[tasks.build]
+description = "Build the native binary ./how-bin"
+run = "python3 scripts/transpile_rust.py how -o how-bin && ./how-bin --version"
+
+[tasks.install]
+description = "Install how on this machine"
+run = "./install.sh"
+
+[tasks.release]
+description = "Release a version: mise run release 0.6.6"
+usage = 'arg "<version>" help="e.g. 0.6.6"'
+run = '''
+set -euo pipefail
+v="${usage_version#v}"
+git diff --quiet HEAD || { echo "✗ commit or stash your changes first"; exit 1; }
+
+# 1. Version lives in three files — keep them in sync.
+sed -i "s/^__version__ = \".*\"/__version__ = \"$v\"/" how
+sed -i "s/^pkgver=.*/pkgver=$v/" PKGBUILD
+sed -i "s/\"version\": \".*\"/\"version\": \"$v\"/" manifest.json
+
+# 2. Never ship red.
+python3 -m unittest discover -s tests
+
+# 3. Commit (if anything changed) and tag (if not tagged yet).
+git diff --quiet || git commit -am "chore(release): v$v"
+git rev-parse -q --verify "refs/tags/v$v" >/dev/null || git tag "v$v"
+
+# 4. Push branch + tag, and fast-forward main. The tag triggers .github/workflows/release.yml.
+git push origin HEAD "v$v"
+git push origin HEAD:main
+
+echo "✓ released v$v"
+'''
