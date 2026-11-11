@@ -1,6 +1,6 @@
 # Maintainer: Mateusz Dzielinski <https://github.com/mdsyseng>
 pkgname=how-cli
-pkgver=0.6.4
+pkgver=0.6.5
 pkgrel=1
 pkgdesc="Fast, concise CLI assistant to learn how to do anything in Omarchy, Linux & your stack"
 arch=('x86_64' 'aarch64')

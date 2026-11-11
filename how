@@ -13,7 +13,7 @@ Zero external runtime dependencies (Python standard library only).
 import os
 import sys
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 
 CONFIG_DIR = os.environ.get("HOW_CONFIG_DIR") or os.path.expanduser("~/.config/how")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -84,7 +84,7 @@ Commands:
   {CYAN}verbosity{RESET} [zero|low|normal]            Default output verbosity
   {CYAN}history{RESET} [filter]                       Recent command suggestions (see also: {CYAN}bash-history{RESET})
   {CYAN}feedback{RESET} [--yes] [text...]             Send quick feedback directly from terminal
-  {CYAN}bad{RESET}|{CYAN}good{RESET}|{CYAN}meh{RESET} [--system none|basic|full] [note]  Rate the last answer and send it for triage
+  {CYAN}bad{RESET}|{CYAN}good{RESET} [note]                        Rate the last answer (sent instantly; add {CYAN}?{RESET} for a short dialogue)
   {CYAN}test{RESET} [--docker|--stats]                Run self-test & A/B benchmark matrix
 
 Options:
@@ -5786,35 +5786,41 @@ def deliver_feedback(title, body, payload, cfg=None, browser_query="", browser_b
 
 
 # -----------------------------------------------------------------------------
-# Answer Rating Feedback (`how bad` / `how good` / `how meh`) -> confirm -> triage
+# Answer Rating Feedback: `how bad` / `how good` -> sent immediately.
+#                         `how bad?` / `how good?` -> short dialogue for precise feedback.
 # -----------------------------------------------------------------------------
 
-RATING_WORDS = {
-    "bad": "bad", "wrong": "bad", "nope": "bad", "-1": "bad", "👎": "bad", "useless": "bad",
-    "good": "good", "great": "good", "+1": "good", "👍": "good", "thanks": "good", "perfect": "good",
-    "meh": "meh", "partial": "meh", "almost": "meh",
-}
-RATING_BADGES = {"bad": "👎 bad", "good": "👍 good", "meh": "🤷 meh"}
+RATING_BADGES = {"bad": "👎 bad", "good": "👍 good"}
 # Words that turn `how good ...` / `how bad ...` into a real question instead of a rating.
 _RATING_QUESTION_CONTINUATIONS = {
     "is", "are", "was", "were", "does", "do", "did", "to", "at", "for", "in", "way", "ways",
     "practice", "practices", "idea", "ideas", "habit", "habits", "can", "should", "would",
 }
-SYSTEM_SHARE_LEVELS = ("none", "basic", "full")
+
+
+def _rating_head(args):
+    """Returns (rating, wants_dialogue) for argv[0] in bad|good|bad?|good?, else (None, False)."""
+    if not args:
+        return None, False
+    head = args[0].lower()
+    dialogue = head.endswith("?")
+    head = head.rstrip("?")
+    return (head, dialogue) if head in RATING_BADGES else (None, False)
 
 
 def is_rating_invocation(args) -> bool:
-    """True when argv is a rating of the last answer (e.g. `how bad`, `how good thanks`), not a question."""
-    words = [a for a in args if not a.startswith("--")]
-    if not words or words[0].lower() not in RATING_WORDS:
+    """True when argv rates the last answer (`how bad`, `how good thanks`, `how bad?`), not a question."""
+    words = [a for a in args if not a.startswith("-")]
+    rating, dialogue = _rating_head(words)
+    if not rating:
         return False
-    return len(words) == 1 or words[1].lower() not in _RATING_QUESTION_CONTINUATIONS
+    return dialogue or len(words) == 1 or words[1].lower() not in _RATING_QUESTION_CONTINUATIONS
 
 
 def collect_feedback_system_info(level: str) -> dict:
     """
-    Collects ONLY the system info the user opted into. Never includes hostname, username,
-    home paths, environment variables, API keys, or file contents.
+    Collects ONLY the system info the user opted into (dialogue mode only). Never includes hostname,
+    username, home paths, environment variables, API keys, or file contents.
     """
     if level not in ("basic", "full"):
         return {}
@@ -5829,14 +5835,7 @@ def collect_feedback_system_info(level: str) -> dict:
         cfg = load_config()
         info["kernel"] = prof.get("kernel", "")
         info["pkg_managers"] = ", ".join(prof.get("pkg_managers", []))
-        try:
-            stack = detect_local_stack()
-            info["project_stack"] = ", ".join(stack.get("tools", [])[:8]) if isinstance(stack, dict) else ""
-        except Exception:
-            info["project_stack"] = ""
         info["fast_model"] = cfg.get("model", DEFAULT_MODEL)
-        info["verbosity"] = cfg.get("verbosity", DEFAULT_VERBOSITY)
-        info["engine"] = "python3" if "__file__" in globals() else "native"
     return {k: v for k, v in info.items() if v not in ("", None)}
 
 
@@ -5854,12 +5853,10 @@ def build_rating_report(rating, rec, comment="", system_info=None):
     elif rec.get("answer"):
         lines.append(f"### Answer\n```\n{rec['answer'][:400]}\n```")
     if comment:
-        lines.append(f"### What was wrong / notes\n{comment}")
+        lines.append(f"### Notes\n{comment}")
     if system_info:
         lines.append("### System (shared by user)\n" + "\n".join(f"- **{k}**: {v}" for k, v in system_info.items()))
-    else:
-        lines.append("### System\n_not shared_")
-    lines.append(f"_how v{__version__} • source: {rec.get('source', '-')}_")
+    lines.append(f"_how v{__version__}_")
     body = "\n\n".join(x for x in lines if x)
 
     payload = {
@@ -5876,121 +5873,46 @@ def build_rating_report(rating, rec, comment="", system_info=None):
     return title, body, payload
 
 
-def _parse_rating_args(args):
-    """Extracts (rating, comment, share_level_or_None) from `how bad [--system none|basic|full] [comment...]`."""
-    rating = RATING_WORDS[args[0].lower()] if args and args[0].lower() in RATING_WORDS else "bad"
-    share = None
-    rest = []
-    i = 1
-    while i < len(args):
-        a = args[i]
-        al = a.lower()
-        if al in ("--system", "--share") and i + 1 < len(args) and args[i + 1].lower() in SYSTEM_SHARE_LEVELS:
-            share = args[i + 1].lower()
-            i += 2
-            continue
-        if al.startswith(("--system=", "--share=")) and al.split("=", 1)[1] in SYSTEM_SHARE_LEVELS:
-            share = al.split("=", 1)[1]
-        elif al in ("--os", "--basic"):
-            share = "basic"
-        elif al in ("--full", "--all-info"):
-            share = "full"
-        elif al in ("--no-system", "--private", "--anonymous"):
-            share = "none"
-        else:
-            rest.append(a)
-        i += 1
-    return rating, " ".join(rest).strip(), share
-
-
-def run_rating_feedback(args, auto_yes=False):
+def run_rating_feedback(args):
     """
-    Handles `how bad|good|meh [comment...]`:
-    1. Shows which answer is being rated and asks "Did you mean this answer?"
-    2. Optionally asks what was wrong.
-    3. Asks how much system info to include (none / basic / full) — default: none.
-    4. Shows the exact report and sends it for triage only after explicit consent.
+    `how bad|good [note...]`  -> sends immediately (query, answer, rating, note; no system info).
+    `how bad?|good?`          -> dialogue: what went wrong / what helped, optional system info, then send.
     """
-    import time
-    rating, comment, share = _parse_rating_args(args)
+    words = [a for a in args if not a.startswith("-")]
+    rating, dialogue = _rating_head(words)
+    comment = " ".join(words[1:]).strip()
     badge = RATING_BADGES[rating]
     rec = load_last_answer()
-    interactive = sys.stdin.isatty() and not auto_yes and os.environ.get("HOW_NO_BROWSER") != "1"
 
     if not rec.get("query"):
-        print(f"\n{YELLOW}! No recent `how` answer found to rate.{RESET}")
-        print(f"{DIM}Ask something first (e.g. {CYAN}how to list open ports{RESET}{DIM}), "
-              f"or send general feedback: {CYAN}how feedback \"...\"{RESET}\n")
+        print(f"{YELLOW}! No recent `how` answer to rate.{RESET} {DIM}Ask something first.{RESET}")
         return
 
-    age = ""
-    if rec.get("at"):
-        age_sec = max(0, int(time.time() - float(rec["at"])))
-        age = f" {DIM}({format_retention_short(age_sec)} ago){RESET}" if age_sec else f" {DIM}(just now){RESET}"
-
-    print(f"\n{BOLD}{MAGENTA}◆ Rate last answer {badge}{RESET}")
-    print(f"  Asked:   {BOLD}how {rec['query']}{RESET}{age}")
-    if rec.get("command"):
-        print(f"  Answer:  {GREEN}{rec['command']}{RESET}")
-    elif rec.get("answer"):
-        print(f"  Answer:  {DIM}{rec['answer'].splitlines()[0][:100]}{RESET}")
-    print()
-
-    if interactive:
+    share = "none"
+    if dialogue and sys.stdin.isatty():
+        answer = rec.get("command") or ((rec.get("answer") or "").splitlines() or [""])[0][:100]
+        print(f"{BOLD}{MAGENTA}◆ {badge}{RESET} {BOLD}how {rec['query']}{RESET}")
+        if answer:
+            print(f"  {DIM}→{RESET} {GREEN}{answer}{RESET}")
         try:
-            ans = input(f"{CYAN}Did you mean this answer? [Y/n]:{RESET} ").strip().lower()
-            if ans in ("n", "no"):
-                print(f"{DIM}Cancelled. To rate something else, re-ask it and run {CYAN}how {args[0]}{RESET}{DIM} right after.{RESET}\n")
-                return
-            if not comment and rating != "good":
-                comment = input(f"{CYAN}What was wrong? (optional, Enter to skip):{RESET} ").strip()
-            if share is None:
-                print(f"\n{BOLD}Include system info to help triage?{RESET}")
-                print(f"  {BOLD}n{RESET}) none {DIM}(default — only query, answer, rating, how version){RESET}")
-                print(f"  {BOLD}b{RESET}) basic {DIM}(OS, desktop/session, shell){RESET}")
-                print(f"  {BOLD}f{RESET}) full {DIM}(basic + kernel, package managers, project stack, model){RESET}")
-                pick = input(f"{CYAN}Choice [n/b/f]:{RESET} ").strip().lower()
-                share = {"b": "basic", "basic": "basic", "f": "full", "full": "full"}.get(pick, "none")
+            prompt = "What went wrong?" if rating == "bad" else "What helped?"
+            extra = input(f"{CYAN}{prompt}{RESET} {DIM}(Enter to skip){RESET} ").strip()
+            comment = " ".join(x for x in (comment, extra) if x)
+            pick = input(f"{CYAN}Share system info?{RESET} {DIM}[N]o / [b]asic: OS, desktop, shell / [f]ull: + kernel, pkg mgrs, model{RESET} ").strip().lower()
+            share = {"b": "basic", "basic": "basic", "f": "full", "full": "full"}.get(pick, "none")
         except (KeyboardInterrupt, EOFError):
-            print(f"\n{DIM}Feedback cancelled.{RESET}\n")
+            print(f"\n{DIM}Cancelled.{RESET}")
             return
 
-    share = share or "none"
     if comment:
         ok, reason = check_feedback_safety(comment)
         if not ok:
-            print(f"\n{YELLOW}Sorry, this feedback could not be accepted automatically ({reason}).{RESET}")
-            print(f"{BOLD}Please share your feedback or problem directly via X (Twitter) with {CYAN}@mtulds{RESET}.\n")
+            print(f"{YELLOW}Sorry, this feedback could not be accepted automatically ({reason}).{RESET}")
+            print(f"{BOLD}Please share it via X (Twitter) with {CYAN}@mtulds{RESET}.")
             return
 
-    sys_info = collect_feedback_system_info(share)
-    title, body, payload = build_rating_report(rating, rec, comment=comment, system_info=sys_info)
-
-    print(f"\n{BOLD}{MAGENTA}◆ Feedback Preview{RESET} {DIM}(exactly what will be sent){RESET}")
-    print(f"  Title:   {BOLD}{title}{RESET}")
-    if comment:
-        print(f"  Comment: {comment}")
-    if sys_info:
-        print(f"  System:  {DIM}{', '.join(f'{k}={v}' for k, v in sys_info.items())}{RESET}")
-    else:
-        print(f"  System:  {DIM}not shared{RESET}")
-    print()
-
-    if not auto_yes:
-        if not interactive:
-            hint_c = f' "{comment}"' if comment else ""
-            print(f"{YELLOW}! Non-interactive shell detected. Feedback not sent.{RESET}")
-            print(f"{DIM}To send non-interactively, run:{RESET} "
-                  f"{CYAN}how {args[0]} --yes --system {share}{hint_c}{RESET}\n")
-            return
-        try:
-            if input(f"{CYAN}Send for triage? [y/N]:{RESET} ").strip().lower() not in ("y", "yes"):
-                print(f"{DIM}Feedback cancelled.{RESET}\n")
-                return
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{DIM}Feedback cancelled.{RESET}\n")
-            return
-
+    title, body, payload = build_rating_report(rating, rec, comment=comment, system_info=collect_feedback_system_info(share))
+    print(f"{DIM}{badge} → how {rec['query'][:60]}{RESET}")
     deliver_feedback(title=title, body=body, payload=payload, browser_query=rec["query"], browser_body=body)
 
 
@@ -6083,8 +6005,6 @@ def parse_cli_args(raw_args):
     if any(a.lower() in ("--feedback", "--bug", "--issue", "--report") for a in raw_args):
         is_feedback_context = True
     elif non_flags and non_flags[0] in ("feedback", "bug", "report", "issue", "run", "!"):
-        is_feedback_context = True
-    elif is_rating_invocation(raw_args):
         is_feedback_context = True
 
     i = 0
@@ -6286,7 +6206,7 @@ def dispatch_subcommand(args, opts):
         return True
 
     if is_rating_invocation(args):
-        run_rating_feedback(args, auto_yes=opts.get("feedback_yes", False))
+        run_rating_feedback(args)
         return True
 
     if opts.get("feedback_mode"):
