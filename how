@@ -254,7 +254,7 @@ def clipboard_tool() -> Optional[list[str]]:
 # ----------------------------------------------------------------------------- safety classifier
 # The badge is decided here, by fixed local rules, never by the model.
 # Order: any dangerous pattern wins; then any modifying pattern; then the command is "safe" only if
-# every segment of every pipeline / && / ; / subshell is a known read-only command. Unknown = modifies.
+# every segment of every pipeline / && / ; / subshell is a known read-only command. Unknown = unsafe.
 
 CMD_START = r"(?:^|[;&|(`]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?"
 SHELLS = r"(?:ba|z|da|k|fi)?sh|python3?|perl|ruby"
@@ -282,7 +282,7 @@ DANGEROUS_RULES = [
     (r">\s*/dev/(?:sd[a-z]|nvme\d|vd[a-z]|mmcblk\d)", "writes straight to a disk device"),
 ]
 
-MODIFIES_RULES = [
+UNSAFE_RULES = [
     (r"\b(?:rm|mv|cp|mkdir|rmdir|touch|ln|chmod|chown|chgrp|truncate|tee|rsync)\b",
      "creates, moves or changes files"),
     (r"\bsed\s+-[a-z]*i", "edits files in place"),
@@ -394,16 +394,16 @@ FIND_EXEC_END = "__how_find_exec_end__"
 
 
 def classify(command: str) -> tuple[str, str]:
-    """Returns (level, reason), level being "safe", "modifies" or "dangerous". Pure, local, no LLM."""
+    """Returns (level, reason), level being "safe", "unsafe" or "dangerous". Pure, local, no LLM."""
     cmd = (command or "").strip()
     # `<placeholder>` slots such as `lsof -p <PID>` are not redirections.
     low = re.sub(r"<[a-z0-9_.:@/-]+>", "x", cmd.lower())
-    for rules, level in ((DANGEROUS_RULES, "dangerous"), (MODIFIES_RULES, "modifies")):
+    for rules, level in ((DANGEROUS_RULES, "dangerous"), (UNSAFE_RULES, "unsafe")):
         for pattern, reason in rules:
             if re.search(pattern, low):
                 return level, reason
     if not cmd or not is_read_only(cmd):
-        return "modifies", "not a known read-only command, so treat it as changing something"
+        return "unsafe", "not a known read-only command, so treat it as changing something"
     return "safe", "reads only"
 
 
@@ -744,12 +744,12 @@ def load_last() -> dict:
 
 # ----------------------------------------------------------------------------- asking and running
 
-BADGES = {"safe": ("🟢", "green"), "modifies": ("🟡", "yellow"), "dangerous": ("🔴", "red")}
+BADGE_COLORS = {"safe": "green", "unsafe": "yellow", "dangerous": "red"}
 
 
 def badge(level: str, reason: str, stream=None) -> str:
-    icon, color = BADGES[level]
-    return paint(f"{icon} {level}", color, "bold", stream=stream) + paint(f" · {reason}", "dim", stream=stream)
+    """The level as a coloured word: safe (green), unsafe (yellow), dangerous (red)."""
+    return paint(level, BADGE_COLORS[level], "bold", stream=stream) + paint(f" · {reason}", "dim", stream=stream)
 
 
 def cmd_ask(question: str, opts: dict) -> int:
@@ -865,11 +865,11 @@ def offer(question: str, command: str, note: str, opts: dict, ask: bool) -> int:
 
 PROMPTS = {
     "safe": "[Enter] run · [c] copy · [e] explain · [q] quit ",
-    "modifies": "[y] run · [c] copy · [e] explain · [q] quit ",
+    "unsafe": "[y] run · [c] copy · [e] explain · [q] quit ",
     "dangerous": "type run + Enter to run · c copy · e explain · Enter quits: ",
 }
 
-RUN_KEYS = {"safe": ("\n", "y"), "modifies": ("y",), "dangerous": ("run",)}
+RUN_KEYS = {"safe": ("\n", "y"), "unsafe": ("y",), "dangerous": ("run",)}
 
 
 def prompt_loop(question: str, command: str, level: str) -> int:
@@ -878,7 +878,7 @@ def prompt_loop(question: str, command: str, level: str) -> int:
         choice = ask_line(prompt).lower() if level == "dangerous" else read_key(prompt)
         if choice in RUN_KEYS[level]:
             return execute(question, command, level, "run")
-        if choice == "\n" and level == "modifies":
+        if choice == "\n" and level == "unsafe":
             print(paint("  this one changes something: press y to run it", "yellow"))
         elif choice == "c":
             print(paint("  copied" if copy_to_clipboard(command) else "  no clipboard tool (install wl-clipboard)", "dim"))
@@ -1021,7 +1021,8 @@ def format_log_line(line: str) -> str:
     except ValueError:
         return line
     when = str(e.get("ts", ""))[:19].replace("T", " ")
-    icon = BADGES[e["safety"]][0] if e.get("safety") in BADGES else " "
+    level = e.get("safety")
+    icon = paint(f"{level:<9}", BADGE_COLORS[level]) if level in BADGE_COLORS else " " * 9
     what = e.get("command") or e.get("question") or ""
     tail = " ".join(str(x) for x in (e.get("action"), f"exit {e['exit_code']}" if e.get("exit_code") else None) if x)
     return f"{paint(when, 'dim')}  {e.get('event', '?'):<6} {icon} {what}" + (paint(f"  [{tail}]", "dim") if tail else "")
@@ -1165,13 +1166,13 @@ HELP = """how: ask in plain words, get one terminal command with a safety badge
   how --version | --help
 
 Flags before the question:
-  -y, --yes      run without asking, but only when the badge is 🟢 safe
+  -y, --yes      run without asking, but only when the badge is safe
   -n, --no-run   print only the command (and copy it), no badge or note on stdout
   --json         print one JSON object; never prompts or runs
   --debug        diagnostics on stderr
 
-Badges: 🟢 safe · 🟡 modifies · 🔴 dangerous
-`how run` asks first: Enter for 🟢, y for 🟡, the word run for 🔴."""
+Badges: safe · unsafe · dangerous
+`how run` asks first: Enter for safe, y for unsafe, the word run for dangerous."""
 
 FLAGS = {"-y": "yes", "--yes": "yes", "-n": "no_run", "--no-run": "no_run", "--json": "json", "--debug": "debug"}
 SINGLE_WORD = {"run", "key", "privacy", "doctor", "update", "uninstall", "version", "help"}

@@ -11,9 +11,9 @@ You will get an acknowledgement, and the fix will be credited to you in the chan
 
 ## In scope
 
-- **Classifier bypasses.** Any command that `how` shows as 🟢 safe but that changes or destroys data,
+- **Classifier bypasses.** Any command that `how` shows as safe but that changes or destroys data,
   changes system state, or runs code fetched from the network. These are security bugs, not feature requests.
-- A 🔴 dangerous command that can be run without typing `run`, or a 🟡 command that runs on Enter or with `-y`.
+- A dangerous command that can be run without typing `run`, or an unsafe command that runs on Enter or with `-y`.
 - The executed command differing in any way from the displayed command.
 - Data sent anywhere other than what `how privacy` states, or sent without the user's action.
 - The API key appearing in the log, on screen (beyond its last 4 characters), or in a file with permissions wider than 0600.
@@ -21,8 +21,8 @@ You will get an acknowledgement, and the fix will be credited to you in the chan
 
 ## Out of scope
 
-- A harmless command shown as 🟡. Unknown commands are 🟡 by design; a pull request with a test is welcome.
-- A destructive command shown as 🟡 rather than 🔴. It still needs explicit confirmation; please open a normal issue.
+- A harmless command shown as unsafe. Unknown commands are unsafe by design; a pull request with a test is welcome.
+- A destructive command shown as unsafe rather than dangerous. It still needs explicit confirmation; please open a normal issue.
 - What the model suggests. The model can be wrong; the badge and the confirmation exist for that reason.
 - Vulnerabilities in the API provider, Python, or the user's shell.
 

@@ -21,7 +21,7 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
   prompt and never runs anything.
 - Terminal control characters in model output are dropped before printing.
 - `how run` runs the last command after a prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
-- Confirmation by badge: Enter runs 🟢, 🟡 needs `y`, 🔴 needs the word `run` and shows the reason.
+- Confirmation by badge: Enter runs safe, unsafe needs `y`, dangerous needs the word `run` and shows the reason.
 - `how key` to store the API key (hidden input, file mode 0600).
 - `how log [N]` and `how log --path` for the local JSON-lines log in `$XDG_STATE_HOME/how/how.log`
   (rotates at 1 MiB).
@@ -30,7 +30,7 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 - `how update`: shows the install channel and how updates arrive; for script installs, re-runs the
   installer after confirmation.
 - `how uninstall`: prints (does not run) the removal commands for the current install method.
-- Flags `-y/--yes` (auto-run only 🟢), `-n/--no-run`, `--json` (versioned schema, never prompts or runs),
+- Flags `-y/--yes` (auto-run only safe), `-n/--no-run`, `--json` (versioned schema, never prompts or runs),
   `--debug`.
 - `HOW_API_URL` for any OpenAI-compatible endpoint; `HOW_STATE_DIR` for the state directory.
 - AUR package `how-omarchy` (PKGBUILD in this repository; published to the AUR after this release).
@@ -42,8 +42,8 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 
 ### Changed
 
-- Safety levels are `safe`, `modifies` and `dangerous` (was `destructive`). The badge is computed only by
-  local rules; unknown commands are 🟡.
+- Safety levels are `safe`, `unsafe` and `dangerous` (was `destructive`). The badge is computed only by
+  local rules; unknown commands are unsafe.
 - `how good` / `how bad [note]` record the rating in the local log. Sharing it is a separate step: `how`
   shows the exact text and, after `y`, opens a pre-filled GitHub issue that you submit yourself.
 - `how explain [command]` makes one API call and returns a short breakdown with the badge
@@ -102,9 +102,9 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 - Repository moved from `mdsyseng/how` to `mtudls/how`; URLs in the script, packaging and docs updated.
 - `install.sh`, `PKGBUILD` and the release workflow ship the plain Python script from a tagged release.
   The Rust launcher is no longer installed, packaged or released.
-- Unknown commands are classified as "modifies" unless every segment is a known read-only command.
+- Unknown commands are classified as "unsafe" unless every segment is a known read-only command.
   `curl`/`wget` piped to a shell, `eval` and `dd of=/dev/*` are classified as destructive;
-  `dd` to a regular file is "modifies".
+  `dd` to a regular file is "unsafe".
 - `--json` errors return `ok: false` with an `error` object (`code`, `message`, `hint`).
 
 ### Removed

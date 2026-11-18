@@ -77,7 +77,7 @@ class TestInteractive(HowTestCase):
         target = self.tmp / "made"
         self.spawn("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.assertEqual(self.finish(), 0)
-        self.assertIn("🟡 modifies", self.output)
+        self.assertIn("unsafe", self.output)
         self.assertIn("copied", self.output)
         self.assertNotRegex(self.output, r"\] run|type run")
         self.assertFalse(target.exists())
@@ -90,7 +90,7 @@ class TestInteractive(HowTestCase):
         self.assertTrue(self.api.requests[0]["body"]["stream"])
         self.assertRegex(self.output, r"how ❯.*\(model: ")
         self.assertIn("Lists all files, including hidden ones.", self.output)
-        self.assertRegex(self.output, r"Suggested command:.*🟢 safe.*copied to clipboard.*how run")
+        self.assertRegex(self.output, r"Suggested command:.*safe.*copied to clipboard.*how run")
         self.assertNotRegex(self.output, r"\] run|type run")
         self.assertEqual(self.clipboard.read_text(), "ls -la")
         self.assertEqual(self.how("log", "--path").returncode, 0)
@@ -109,7 +109,7 @@ class TestInteractive(HowTestCase):
 
     def test_run_safe_runs_on_enter(self):
         self.ask_then_run("to", "say", "hi", answer="```bash\nprintf 'ran-%s\\n' ok\n```\nPrints a marker.")
-        self.assertIn("🟢 safe", self.asked)
+        self.assertIn("safe", self.asked)
         self.expect(r"\[Enter\] run")
         self.send("\r")
         self.expect("ran-ok")
@@ -134,7 +134,7 @@ class TestInteractive(HowTestCase):
         victim.mkdir()
         answer = f"```bash\nrm -rf {victim}\n```\nDeletes it."
         self.ask_then_run("to", "delete", "it", answer=answer)
-        self.assertIn("🔴 dangerous", self.asked)
+        self.assertIn("dangerous", self.asked)
         self.expect("type run")
         self.send("y\r")
         self.assertEqual(self.finish(), 0)
@@ -154,7 +154,7 @@ class TestInteractive(HowTestCase):
         target = self.tmp / "made"
         self.spawn("-y", "to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates.")
         self.assertEqual(self.finish(), 0)
-        self.assertIn("🟡 modifies", self.output)
+        self.assertIn("unsafe", self.output)
         self.assertFalse(target.exists())
 
     def test_run_nonzero_exit_is_reported(self):
