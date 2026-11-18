@@ -1,0 +1,18 @@
+pkgbase = how-omarchy
+	pkgdesc = Ask in plain words, get one terminal command with a safety badge (Omarchy/Arch)
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/mtudls/how
+	arch = any
+	license = MIT
+	depends = python
+	optdepends = wl-clipboard: copy the suggested command to the clipboard on Wayland
+	optdepends = xclip: copy the suggested command to the clipboard on X11
+	optdepends = xsel: copy the suggested command to the clipboard on X11 (alternative)
+	provides = how
+	conflicts = how
+	conflicts = how-cli
+	source = how-omarchy-1.0.0.tar.gz::https://github.com/mtudls/how/archive/refs/tags/v1.0.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = how-omarchy

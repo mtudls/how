@@ -81,11 +81,12 @@ Installs `how` for the current user, verified against the release's SHA256SUMS.t
   --purge            with --uninstall: also delete config (API key) and log/state
 
 Environment:
-  HOW_VERSION        release tag to install (default: v1.0.0)
+  HOW_VERSION        release tag to install (same as --version)
   HOW_INSTALL_DIR    target directory (default: ~/.local/bin)
   HOW_CONFIG_DIR, HOW_STATE_DIR, XDG_CONFIG_HOME, XDG_STATE_HOME  (for --purge)
   NO_COLOR           disable colors
 EOF
+  printf '\nThis installer installs %s by default.\n' "$HOW_DEFAULT_VERSION"
 }
 
 # ---------------------------------------------------------------- output

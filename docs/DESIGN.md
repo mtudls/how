@@ -49,13 +49,16 @@ Kept from earlier versions because they still hold:
    The model's output never influences the level.
 3. **Unknown means careful.** Anything the rules do not recognise is 🟡 and needs an explicit `y`.
 4. **One request, one host, stated up front.** Each question sends the question text, OS pretty name,
-   shell name and an Omarchy marker to one host (`api.groq.com` unless `HOW_API_URL` says otherwise).
+   shell name and an Omarchy marker (plus the API key and model name) to one host (`api.groq.com` unless
+   `HOW_API_URL` says otherwise). `how explain` sends the command instead; `how doctor` checks the same host.
    No telemetry, no background calls, no update pings.
-5. **`how privacy` must be literally true.** It describes what the code does, and tests hold it to that.
-6. **The key is the user's.** Stored with mode 0600, never logged, never printed beyond its last 4 characters.
-7. **Everything is inspectable.** A local JSON-lines log (`how log`), a health check (`how doctor`),
+5. **Sharing is the user's act.** `how good` / `how bad` log the rating locally. To share it, `how` shows the
+   exact text and, after `y`, opens a pre-filled GitHub issue in the browser; the user submits it.
+6. **`how privacy` must be literally true.** It describes what the code does; a change to either changes both.
+7. **The key is the user's.** Stored with mode 0600, never logged, never printed beyond its last 4 characters.
+8. **Everything is inspectable.** A local JSON-lines log (`how log`), a health check (`how doctor`),
    and removal commands printed, not run (`how uninstall`).
-8. **Fail loudly.** No key, a rejected key, a rate limit or a network error gives a clear message and
+9. **Fail loudly.** No key, a rejected key, a rate limit or a network error gives a clear message and
    exit 1. There is no silent fallback.
 
 ## The safety classifier
@@ -75,8 +78,9 @@ Dangerous patterns include: recursive forced removal (`rm -rf` and variants), `m
 into a shell (`curl … | sh`, `… | sudo bash`, `bash <(curl …)`, `sh -c "$(curl …)"`), `eval`, fork bombs,
 `chmod -R 777 /`, `git push --force` and `git reset --hard`.
 
-Some tools are read-only only with certain subcommands (for example `git status` or `systemctl status`
-versus `git commit` or `systemctl restart`). The allowlist names those subcommands explicitly.
+Some tools are read-only only with certain subcommands or flags (for example `git status` versus
+`git stash drop`, or `find . -name x` versus `find . -delete`, which is 🔴). The allowlist names those
+forms explicitly. A command that cannot be parsed (for example, unbalanced quotes) is 🟡, never 🟢.
 
 Confirmation follows the level: Enter runs 🟢, `y` runs 🟡 (Enter does not), and 🔴 requires typing
 `run` after the reason is shown. `-y/--yes` auto-runs only 🟢.
@@ -102,7 +106,6 @@ The badge helps the user read the command. It does not replace reading it.
 
 ## Testing
 
-The classifier is a pure function with a table of unit tests: every dangerous pattern, every allowlisted
-read-only form, and known bypass attempts. The CLI is tested with `HOW_CONFIG_DIR`/`HOW_STATE_DIR` pointing
-at temporary directories and the API replaced by a local stub, so tests never touch the user's files or
-the network.
+The classifier is a pure function, tested with a table of commands and expected levels: dangerous
+patterns, allowlisted read-only forms, and known bypass attempts. CLI tests point `HOW_CONFIG_DIR` and
+`HOW_STATE_DIR` at temporary directories so they never touch the user's files, and must not reach the network.

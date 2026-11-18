@@ -35,14 +35,20 @@ yay -S how-omarchy                  # or, on Omarchy: omarchy pkg aur add how-om
 omarchy plugin add https://github.com/mtudls/how.git --enable
 ```
 
-**3. Install script** (installs to `~/.local/bin/how` from a tagged release, verified against the release's `SHA256SUMS`)
+Enabling the plugin makes `~/.local/bin/how` a link into the plugin checkout. It steps aside if the package is installed.
+
+
+**3. Install script**
 
 <!-- install:script -->
 ```bash
-curl -fsSLO https://github.com/mtudls/how/releases/download/v1.0.0/install.sh
-curl -fsSLO https://github.com/mtudls/how/releases/download/v1.0.0/SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS && bash install.sh
+curl -fsSL https://github.com/mtudls/how/releases/latest/download/install.sh | bash
 ```
+
+The installer downloads `how` from one pinned release tag, refuses to install it unless its SHA-256 matches the
+release's checksum file, and puts it in `~/.local/bin/how`. It never uses sudo, never edits your shell files and
+installs no background updater. Add `-s -- --dry-run` to see what it would do, or download `install.sh` and read it
+before running `bash install.sh`.
 
 Then check the result with `how doctor`.
 
@@ -83,7 +89,7 @@ Flags go before the question:
 When stdout is not a terminal (for example `how to list ports | less`), `how` prints only the command on
 stdout, puts the badge and note on stderr, and never prompts.
 
-`how good` and `how bad` show you exactly what would be sent and ask for confirmation before sending anything.
+`how good` and `how bad` record your rating locally. Sharing it is a separate step you confirm (see Privacy).
 
 ## Safety model
 
@@ -93,14 +99,14 @@ Every command gets one of three badges:
 |---|---|---|
 | 🟢 safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
 | 🟡 modifies | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
-| 🔴 dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run**; the reason is shown |
+| 🔴 dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run** and press Enter; the reason is shown, and Enter alone quits |
 
 The badge is computed on your machine by fixed rules. The model never decides it.
 Anything the rules do not recognise is 🟡. A command is 🟢 only if every segment of every pipeline,
 `&&`, `;` and subshell is a known read-only command; redirecting output to a file is never 🟢.
 
 The command shown is exactly the command executed, through your `$SHELL -c`, in your terminal.
-If it exits non-zero, `how` tells you.
+If it exits non-zero, `how` tells you and exits with the same code.
 
 The badge is a seatbelt, not a guarantee. Read the command before you run it.
 See [docs/DESIGN.md](docs/DESIGN.md) for how the classifier works and where it stops.
@@ -109,9 +115,11 @@ See [docs/DESIGN.md](docs/DESIGN.md) for how the classifier works and where it s
 
 - **What is sent:** your question, your OS name (for example "Arch Linux"), your shell name, and whether you run Omarchy.
   Nothing else: no file contents, no history, no environment.
-- **Where:** one HTTPS request per question to `api.groq.com` (or the endpoint in `HOW_API_URL`).
-  `how explain` makes one request, only when you ask for it.
-- **Ratings:** `how good` and `how bad` send nothing until they have shown you exactly what will be sent, and where, and you answer `y`.
+- **Where:** one HTTPS request per question to `api.groq.com` (or the endpoint in `HOW_API_URL`), carrying your
+  API key and the model name. `how explain` sends the command instead of a question. `how doctor` contacts the
+  same host to check that it answers.
+- **Ratings:** `how good` and `how bad` are noted in your local log. To share one, `how` shows the exact text,
+  and only after you answer `y` opens a pre-filled GitHub issue in your browser, which you submit yourself.
 - **Never:** no telemetry, no background network calls, no update checks.
 - **Your key** is stored locally with mode 0600, never logged, and never printed (at most its last 4 characters).
 
@@ -139,7 +147,9 @@ how doctor      # version, install method, key, API reachability, clipboard tool
 how uninstall   # prints the exact removal commands for your install method; it runs nothing
 ```
 
-Your config and log stay until you delete them (see the paths below).
+For example: `yay -Rns how-omarchy` for the package, `omarchy plugin remove io.github.mdsyseng.how` for the
+plugin, or `install.sh --uninstall` (add `--purge` to delete your key and log) for the script.
+Your config and log stay until you delete them; `how uninstall` prints that command too.
 
 ## Files and environment
 
@@ -148,26 +158,36 @@ Your config and log stay until you delete them (see the paths below).
 | `~/.config/how/config.json` | API key and model (mode 0600). Honours `$XDG_CONFIG_HOME` |
 | `~/.local/state/how/how.log` | Local log, one JSON object per line (mode 0600). Rotates at 1 MiB to `how.log.1`. Honours `$XDG_STATE_HOME` |
 | `~/.local/state/how/last.json` | The last answer, used by `how run`, `how explain`, `how good`/`bad` |
+| `~/.local/state/how/install-receipt` | Written by the install script, so `install.sh --uninstall` removes only what it installed |
+| `~/.local/state/how/plugin.log` | Written by the Omarchy plugin when it links `~/.local/bin/how` |
+| `/etc/os-release` | Read for your OS name |
 | `GROQ_API_KEY` | API key; used instead of the stored one |
 | `HOW_MODEL` | Model name to request |
 | `HOW_API_URL` | Any OpenAI-compatible chat completions endpoint |
 | `HOW_CONFIG_DIR`, `HOW_STATE_DIR` | Override the config and state directories |
+| `HOW_VERSION`, `HOW_INSTALL_DIR` | Install script only: release tag and target directory |
 | `NO_COLOR` | Disable colour |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Answer shown (and, if run, the command finished) |
-| `1` | Error: no key, rejected key, rate limit, network or timeout. The message says what to do |
-| `2` | The model said it does not know |
+| `0` | Answer shown, and the command (if you ran it) succeeded |
+| `1` | Error: no key, rejected key, rate limit, network or timeout. The message says what to do. `how doctor` also exits 1 when a check fails |
+| `2` | The model said it does not know, or the command line was not understood |
+| `130` | Interrupted with Ctrl-C |
+| other | You ran the command and it failed: `how` exits with the command's own code |
 
 ## FAQ
 
 **I have no API key.** Run `how key` and follow the link; Groq's key is free. Without a key, `how` stops with
-a clear message. It never makes up an answer locally.
+a clear message. It never makes up an answer locally. The badge still works: `how explain "some command"` shows it
+without a key.
 
 **Does it work offline?** No. Every answer comes from the API. There is no offline fallback.
+
+**The README pipes `curl` into `bash`, which `how` marks 🔴. Why?** Because it runs code from the network without
+showing it. The installer is short and does one thing, but if you want to see it first, download it, read it, then run it.
 
 **Can I use another provider?** Yes, any OpenAI-compatible endpoint:
 `HOW_API_URL=https://api.example.com/v1/chat/completions HOW_MODEL=model-name how ...`.
