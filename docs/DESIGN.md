@@ -5,13 +5,14 @@ keeps, and how the safety badge works, including what it cannot do.
 
 ## The concept
 
-Ask in plain words, get **one** terminal command with a safety badge, and run it with one keypress.
+Ask in plain words, get **one** terminal command with a safety badge, copied to your clipboard. Asking never
+holds the terminal: you are back at your own prompt, and `how run` runs the command after one keypress.
 Nothing runs, and nothing leaves the machine, without the user seeing it.
 
 Three things are optimised, in this order of tie-breaking:
 
 1. **Trust and awareness.** The user always sees what will run and what will be sent.
-2. **Seconds saved per question.** One question, one command, one keypress.
+2. **Seconds saved per question.** One question, one command, already on your clipboard.
 3. **Joy of use.** A short answer, a clear badge, no ceremony.
 
 ## From 0.6.6 to 1.0.0

@@ -12,11 +12,12 @@ First release of the rewrite. The `v1.0.0` tag was created before the rewrite wa
 the 0.6.6 code; use 1.0.1 or later.
 
 A distilled rewrite. `how` is again one small Python file: ask in plain words, get one command with a
-safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for what was cut and why.
+safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for what was cut and why.
 
 ### Added
 
-- Interactive answer prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
+- Asking shows the command with its badge, copies it and returns to your shell prompt; it never runs anything.
+- `how run` runs the last command after a prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
 - Confirmation by badge: Enter runs 🟢, 🟡 needs `y`, 🔴 needs the word `run` and shows the reason.
 - `how key` to store the API key (hidden input, file mode 0600).
 - `how log [N]` and `how log --path` for the local JSON-lines log in `$XDG_STATE_HOME/how/how.log`

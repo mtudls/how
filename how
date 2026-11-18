@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# omarchy:summary=Ask in plain words, get one terminal command with a safety badge; one keypress runs it
+# omarchy:summary=Ask in plain words, get one terminal command with a safety badge, copied to your clipboard
 # omarchy:group=agent
 # omarchy:args=[-y|-n|--json|--debug] <question...> | run | explain [command] | good | bad [note] | key | log [N] | privacy | doctor | update | uninstall
 # omarchy:examples=how to find largest files here | how explain "tar -xzvf a.tgz" | how run | how privacy | how doctor
@@ -9,8 +9,9 @@
 Privacy promise: the only data that leaves this machine is your question (or, for
 `how explain`, the command) plus your OS name and shell name, sent to one host
 (api.groq.com unless HOW_API_URL says otherwise), and only when you ask something.
-No telemetry, no background calls, no update checks. Nothing runs until you see it
-and press a key; the safety badge comes from local rules below, never from the model.
+No telemetry, no background calls, no update checks. Asking never runs anything: the
+command is shown and copied, and you are back at your own prompt. Only `how run` runs
+it, after a keypress; the safety badge comes from local rules below, never from the model.
 
 Python 3.9+, standard library only. `how privacy` prints the details.
 """
@@ -737,7 +738,7 @@ def cmd_ask(question: str, opts: dict) -> int:
     if not answer.command:
         print(answer.note)
         return 0
-    return offer(question, answer.command, answer.note, opts)
+    return offer(question, answer.command, answer.note, opts, ask=False)
 
 
 def json_result(question: str, answer: Optional[Answer], level: Optional[str], reason: str,
@@ -751,8 +752,8 @@ def json_result(question: str, answer: Optional[Answer], level: Optional[str], r
             "version": __version__}
 
 
-def offer(question: str, command: str, note: str, opts: dict) -> int:
-    """Shows the command with its badge, then (on a terminal) waits for one keypress to run it."""
+def offer(question: str, command: str, note: str, opts: dict, ask: bool) -> int:
+    """Shows the command with its badge and copies it. Only `how run` (ask=True) waits for a keypress to run it."""
     level, reason = classify(command)
     if opts["no_run"] or not interactive():
         print(command)
@@ -767,10 +768,14 @@ def offer(question: str, command: str, note: str, opts: dict) -> int:
     if copied:
         extras.append("copied")
         log_event("copy", question=question, command=command, safety=level, action="copy")
+    elif not ask:
+        extras.append("not copied: no clipboard tool (install wl-clipboard); `how run` runs it")
     if extras:
         print(paint("  " + " · ".join(extras), "dim"))
     if opts["yes"] and level == "safe":
         return execute(question, command, level, "auto")
+    if not ask:
+        return 0
     return prompt_loop(question, command, level)
 
 
@@ -828,7 +833,7 @@ def cmd_run(opts: dict) -> int:
     last = load_last()
     if not last.get("command"):
         raise HowError("no_command", "the last answer had no command", "ask something first")
-    return offer(last["question"], last["command"], last.get("note", ""), opts)
+    return offer(last["question"], last["command"], last.get("note", ""), opts, ask=True)
 
 
 def explain_and_print(command: str) -> None:
@@ -1064,8 +1069,8 @@ def cmd_uninstall() -> int:
 
 HELP = """how: ask in plain words, get one terminal command with a safety badge
 
-  how <question>          e.g. how to find largest files here
-  how run                 run the last suggested command
+  how <question>          e.g. how to find largest files here (shown and copied; nothing runs)
+  how run                 run the last suggested command, after a keypress
   how explain [command]   break down the last (or given) command
   how good | how bad [note]   rate the last answer
   how key                 set your API key (free at console.groq.com/keys)
@@ -1077,11 +1082,12 @@ HELP = """how: ask in plain words, get one terminal command with a safety badge
 
 Flags before the question:
   -y, --yes      run without asking, but only when the badge is 🟢 safe
-  -n, --no-run   just print (and copy) the command
+  -n, --no-run   print only the command (and copy it), no badge or note on stdout
   --json         print one JSON object; never prompts or runs
   --debug        diagnostics on stderr
 
-Badges: 🟢 safe (Enter runs) · 🟡 modifies (press y) · 🔴 dangerous (type run)"""
+Badges: 🟢 safe · 🟡 modifies · 🔴 dangerous
+`how run` asks first: Enter for 🟢, y for 🟡, the word run for 🔴."""
 
 FLAGS = {"-y": "yes", "--yes": "yes", "-n": "no_run", "--no-run": "no_run", "--json": "json", "--debug": "debug"}
 SINGLE_WORD = {"run", "key", "privacy", "doctor", "update", "uninstall", "version", "help"}

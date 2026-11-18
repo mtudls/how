@@ -1,14 +1,15 @@
 # how
 
-Ask in plain words, get one terminal command with a safety badge, and run it with one keypress.
+Ask in plain words, get one terminal command with a safety badge, copied to your clipboard.
+You are straight back at your own prompt: paste it, edit it, or type `how run`.
 Nothing runs, and nothing leaves your machine, without you seeing it first.
 
 ```console
 $ how to find largest files here
 🟢 safe · reads only
   du -ah . | sort -rh | head -20
-  Lists the 20 largest files and folders under the current directory.
-[Enter] run · [c] copy · [e] explain · [q] quit
+  Lists the 20 largest files and folders under the current directory. · copied
+$ █
 ```
 
 `how` is a single Python file with no dependencies beyond the standard library (Python 3.9+).
@@ -66,22 +67,23 @@ You can also set `GROQ_API_KEY` in your environment instead.
 
 ```bash
 how to find largest files here     # ask; a leading "to" is fine
-how run                            # run the last suggested command (same confirmation rules)
+how run                            # run the last suggested command, after a keypress
 how explain                        # short breakdown of the last command
 how explain "tar -xzvf a.tgz"      # ...or of any command you paste
 how good                           # rate the last answer
 how bad "wrong flag for btrfs"     # rate it, with a note
 ```
 
-After an answer you choose: **Enter** runs it (🟢 only), **c** copies it, **e** explains it, **q** quits.
-When a clipboard tool is installed (`wl-copy`, `xclip` or `xsel`), the command is copied automatically.
+Asking never runs anything and never holds your terminal: `how` prints the answer, copies the command
+(with `wl-copy`, `xclip` or `xsel`) and exits. Paste it at your prompt, or type `how run`.
+`how run` shows the command again and waits: **Enter** runs it (🟢 only), **c** copies it, **e** explains it, **q** quits.
 
 Flags go before the question:
 
 | Flag | Effect |
 |---|---|
-| `-y`, `--yes` | Run without asking, but only when the badge is 🟢 |
-| `-n`, `--no-run` | Never prompt; print the command and copy it |
+| `-y`, `--yes` | Run straight away, but only when the badge is 🟢 |
+| `-n`, `--no-run` | Print only the command on stdout (badge and note go to stderr) and copy it |
 | `--json` | Print one JSON object on stdout; never prompts, never runs |
 | `--debug` | Verbose diagnostics on stderr |
 
@@ -94,7 +96,7 @@ stdout, puts the badge and note on stderr, and never prompts.
 
 Every command gets one of three badges:
 
-| Badge | Meaning | To run it |
+| Badge | Meaning | To run it with `how run` |
 |---|---|---|
 | 🟢 safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
 | 🟡 modifies | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
