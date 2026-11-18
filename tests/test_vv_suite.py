@@ -196,14 +196,14 @@ def test_behavior_and_edge_cases():
         code, out, err, _ = run_how(["feedback", "bluetooth pairing failure"], env_override=env_feed)
         assert code == 0
         assert "Feedback Preview" in out or "Target:" in out, "Feedback preview must be printed"
-        assert "mdsyseng/how" in out, "Preview must show mdsyseng/how target"
+        assert "mtudls/how" in out, "Preview must show mtudls/how target"
         assert "not sent" in out.lower(), "Feedback without --yes in non-TTY must not be sent"
 
         fake_gh_dir = tempfile.mkdtemp(prefix="how_test_fake_gh_")
         gh_args_file = os.path.join(fake_gh_dir, "gh_args.txt")
         fake_gh_script = os.path.join(fake_gh_dir, "gh")
         with open(fake_gh_script, "w", encoding="utf-8") as f:
-            f.write(f'#!/bin/sh\necho "$@" > "{gh_args_file}"\necho "https://github.com/mdsyseng/how/issues/999"\n')
+            f.write(f'#!/bin/sh\necho "$@" > "{gh_args_file}"\necho "https://github.com/mtudls/how/issues/999"\n')
         os.chmod(fake_gh_script, 0o755)
 
         tmp_cache_dir = tempfile.mkdtemp(prefix="how_test_feed_cache_")
@@ -220,8 +220,8 @@ def test_behavior_and_edge_cases():
             assert os.path.exists(gh_args_file), "Fake gh must be executed when --yes is supplied"
             with open(gh_args_file, encoding="utf-8") as f:
                 recorded_args = f.read()
-            assert "--repo" in recorded_args and "mdsyseng/how" in recorded_args
-            assert "Issue created directly from terminal" in out_yes or "https://github.com/mdsyseng/how/issues/999" in out_yes
+            assert "--repo" in recorded_args and "mtudls/how" in recorded_args
+            assert "Issue created directly from terminal" in out_yes or "https://github.com/mtudls/how/issues/999" in out_yes
         finally:
             shutil.rmtree(fake_gh_dir, ignore_errors=True)
             shutil.rmtree(tmp_cache_dir, ignore_errors=True)

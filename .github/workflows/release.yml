@@ -24,18 +24,23 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate syntax, V&V, Safety & Rust Transpilation
+      - name: Validate syntax, V&V & Safety
         run: |
           python -m py_compile how scripts/transpile_rust.py
           python tests/test_vv_suite.py
           python tests/test_safety.py -v
           bash -n install.sh
-          python3 scripts/transpile_rust.py how -o how-linux-x86_64
-          ./how-linux-x86_64 --version
+          chmod +x how
+          ./how --version
+
+      - name: Verify installer installs the Python script
+        run: |
+          HOW_INSTALL_DIR=/tmp/how-inst ./install.sh
+          /tmp/how-inst/how --version
 
       - name: Generate SHA256 Checksums
         run: |
-          sha256sum how how-linux-x86_64 install.sh manifest.json Service.qml PKGBUILD > SHA256SUMS.txt
+          sha256sum how install.sh manifest.json Service.qml PKGBUILD > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -43,7 +48,6 @@ jobs:
         with:
           files: |
             how
-            how-linux-x86_64
             install.sh
             manifest.json
             Service.qml

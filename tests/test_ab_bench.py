@@ -22,7 +22,6 @@ import math
 import hashlib
 import tempfile
 import subprocess
-import shutil
 
 # Color support
 USE_COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"

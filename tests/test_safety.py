@@ -132,7 +132,11 @@ class TestSafetyAndSandbox(unittest.TestCase):
             with patch("urllib.request.urlopen", side_effect=fake_urlopen):
                 with patch.object(self.how, "get_api_key", return_value="gsk_fake_key_12345"):
                     with patch.object(self.how, "require_api_key", return_value="gsk_fake_key_12345"):
-                        self.how.ask_groq("how to test fallback", no_cache=True)
+                        # Exhausting the bounded fallback pool is a hard provider error (no offline fallback)
+                        with self.assertRaises(self.how.HowQueryError) as ctx:
+                            self.how.ask_groq("how to test fallback", no_cache=True)
+            self.assertEqual(ctx.exception.code, "provider_error")
+            self.assertIn("404", ctx.exception.message)
         finally:
             for err in created_errors:
                 try:
@@ -497,12 +501,13 @@ class TestSafetyAndSandbox(unittest.TestCase):
         finally:
             shutil.rmtree(tmp_bin_dir, ignore_errors=True)
 
-    def test_install_sh_rust_and_python_only_modes(self):
-        """install.sh supports both --python-only and default native Rust transpilation."""
+    def test_install_sh_installs_python_script_and_accepts_python_only(self):
+        """install.sh always installs the plain Python script; --python-only is an accepted no-op."""
         install_sh = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "install.sh"))
         tmp_inst_py = tempfile.mkdtemp(prefix="how_inst_py_")
-        tmp_inst_rs = tempfile.mkdtemp(prefix="how_inst_rs_")
+        tmp_inst_def = tempfile.mkdtemp(prefix="how_inst_def_")
         try:
+            # Backwards-compatible --python-only flag still succeeds and installs the script
             env_py = os.environ.copy()
             env_py["HOW_INSTALL_DIR"] = tmp_inst_py
             p1 = subprocess.run(["bash", install_sh, "--python-only"], capture_output=True, text=True, env=env_py)
@@ -510,22 +515,25 @@ class TestSafetyAndSandbox(unittest.TestCase):
             installed_py = os.path.join(tmp_inst_py, "how")
             self.assertTrue(os.path.isfile(installed_py))
             with open(installed_py, "rb") as f:
-                self.assertTrue(f.read(2) == b"#!")
+                self.assertEqual(f.read(2), b"#!")
 
+            # Default install is the Python script, never an ELF binary, even when rustc is available
+            env_def = os.environ.copy()
+            env_def["HOW_INSTALL_DIR"] = tmp_inst_def
             rustc_bin = shutil.which("rustc") or os.path.expanduser("~/.cargo/bin/rustc")
             if os.path.isfile(rustc_bin) and os.access(rustc_bin, os.X_OK):
-                env_rs = os.environ.copy()
-                env_rs["HOW_INSTALL_DIR"] = tmp_inst_rs
-                env_rs["PATH"] = os.path.dirname(rustc_bin) + ":" + env_rs.get("PATH", "")
-                p2 = subprocess.run(["bash", install_sh], capture_output=True, text=True, env=env_rs)
-                self.assertEqual(p2.returncode, 0, f"install.sh failed: {p2.stderr}")
-                installed_rs = os.path.join(tmp_inst_rs, "how")
-                self.assertTrue(os.path.isfile(installed_rs))
-                with open(installed_rs, "rb") as f:
-                    self.assertEqual(f.read(4), b"\x7fELF")
+                env_def["PATH"] = os.path.dirname(rustc_bin) + ":" + env_def.get("PATH", "")
+            p2 = subprocess.run(["bash", install_sh], capture_output=True, text=True, env=env_def)
+            self.assertEqual(p2.returncode, 0, f"install.sh failed: {p2.stderr}")
+            installed_def = os.path.join(tmp_inst_def, "how")
+            self.assertTrue(os.path.isfile(installed_def))
+            with open(installed_def, "rb") as f:
+                head = f.read(4)
+            self.assertTrue(head.startswith(b"#!"), f"Default install must be the Python script, got {head!r}")
+            self.assertNotEqual(head, b"\x7fELF")
         finally:
             shutil.rmtree(tmp_inst_py, ignore_errors=True)
-            shutil.rmtree(tmp_inst_rs, ignore_errors=True)
+            shutil.rmtree(tmp_inst_def, ignore_errors=True)
 
     def test_quality_suite_classification_and_extraction(self):
         """tests/quality/run_compare.py and extract_history.py accurately classify outputs and filter junk."""
@@ -569,7 +577,7 @@ class TestSafetyAndSandbox(unittest.TestCase):
         self.assertTrue(eh_mod.is_junk_query("to destroy omarchy?"))
         self.assertFalse(eh_mod.is_junk_query("to check memory usage"))
         self.assertEqual(
-            eh_mod.semantic_signature("to push to freshly created gh repo? repo is mdsyseng/how"),
+            eh_mod.semantic_signature("to push to freshly created gh repo? repo is mtudls/how"),
             eh_mod.semantic_signature("to push new local repo to freshly created gh repo?"),
         )
 
@@ -983,23 +991,32 @@ class TestSafetyAndSandbox(unittest.TestCase):
                 self.assertNotIn("context_prompted", self.how.load_config())
 
         # 3. Repeat cached query in a TTY does NOT block on stdin (`prompt_repeat_question_memory` not called in ask_groq)
-        self.how.save_cached_response(
-            "to list open ports",
-            "openai/gpt-oss-120b",
-            "normal",
-            "```bash\nss -tulpn\n```\nLists listening sockets.",
-            3600,
-        )
+        class FakePortsSSE:
+            def __enter__(self):
+                return iter([
+                    b'data: {"choices": [{"delta": {"content": "```bash\\nss -tulpn\\n```\\nLists listening sockets."}}]}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def __exit__(self, *args):
+                pass
+
         with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
             with patch("builtins.input", side_effect=AssertionError("Cached repeat query must never hijack stdin")):
-                buf1 = io.StringIO()
-                buf2 = io.StringIO()
-                with contextlib.redirect_stdout(buf1):
-                    self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
-                with contextlib.redirect_stdout(buf2):
-                    self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
+                with patch.object(self.how, "get_api_key", return_value="gsk_fake_key_12345"):
+                    buf1 = io.StringIO()
+                    buf2 = io.StringIO()
+                    # First ask goes to the (mocked) provider and populates the cache
+                    with patch("urllib.request.urlopen", return_value=FakePortsSSE()):
+                        with contextlib.redirect_stdout(buf1):
+                            self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
+                    # Repeat ask is served from cache without any network call
+                    with patch("urllib.request.urlopen", side_effect=AssertionError("Repeat query must hit cache")):
+                        with contextlib.redirect_stdout(buf2):
+                            self.how.ask_groq("to list open ports", verbosity="normal", offline=False)
                 self.assertIn("ss -tulpn", buf1.getvalue())
                 self.assertIn("ss -tulpn", buf2.getvalue())
+                self.assertIn("[cache]", buf2.getvalue())
 
         # 4. Transient HTTP 503 failover does NOT overwrite the user's configured model in config.json
         self.how.save_config({"model": "custom/user-fast-model", "discover_os": False, "discover_stack": False})
@@ -1156,6 +1173,186 @@ class TestSafetyAndSandbox(unittest.TestCase):
                     line.rstrip(" \t"),
                     f"Trailing whitespace in {os.path.relpath(path, repo_root)}:{lineno}",
                 )
+
+
+PROVIDER_KEY_ENV_VARS = (
+    "GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GITHUB_TOKEN", "GH_TOKEN",
+    "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HOW_OFFLINE", "HOW_REFLEX",
+)
+
+
+class TestNoImplicitOfflineFallback(unittest.TestCase):
+    """Without a key, or when the provider fails, `how` errors on stderr instead of answering from the reflex KB."""
+
+    QUERY = ["to", "check", "memory", "usage"]  # would be answered by the System-1 reflex KB (`free -h`)
+
+    def setUp(self):
+        self.tmp_home = tempfile.mkdtemp(prefix="how_test_home_")
+        self.env = {k: v for k, v in os.environ.items() if k not in PROVIDER_KEY_ENV_VARS}
+        self.env.update({
+            "HOME": self.tmp_home,
+            "HOW_CONFIG_DIR": os.path.join(self.tmp_home, "cfg"),
+            "HOW_CACHE_DIR": os.path.join(self.tmp_home, "cache"),
+            "HOW_NO_GH_AUTO": "1",
+            "NO_COLOR": "1",
+        })
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_home, ignore_errors=True)
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, HOW_PATH, *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=30,
+        )
+
+    def test_no_key_errors_on_stderr_without_reflex_answer(self):
+        proc = self._run(*self.QUERY)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout.strip(), "", f"Nothing may be printed on stdout, got: {proc.stdout!r}")
+        self.assertIn("No API key configured", proc.stderr)
+        self.assertIn("how auth login", proc.stderr)
+        self.assertIn("GROQ_API_KEY", proc.stderr)
+        self.assertNotIn("free -h", proc.stdout + proc.stderr)
+        self.assertNotIn("reflex •", proc.stdout + proc.stderr)
+
+    def test_no_key_json_mode_keeps_stdout_machine_readable(self):
+        proc = self._run("--json", *self.QUERY)
+        self.assertNotEqual(proc.returncode, 0)
+        payload = json.loads(proc.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["command"])
+        self.assertEqual(payload["error"]["code"], "no_api_key")
+        self.assertIn("No API key configured", proc.stderr)
+
+    def test_explicit_offline_modes_still_work_without_key(self):
+        for args in (["--offline", *self.QUERY], ["reflex", *self.QUERY], ["offline", *self.QUERY]):
+            proc = self._run(*args)
+            self.assertEqual(proc.returncode, 0, f"{args}: {proc.stderr}")
+            self.assertIn("free -h", proc.stdout)
+
+    def test_provider_errors_raise_instead_of_reflex_fallback(self):
+        import contextlib
+        import io
+
+        env_backup = os.environ.copy()
+        try:
+            for k in PROVIDER_KEY_ENV_VARS:
+                os.environ.pop(k, None)
+            os.environ.update({k: self.env[k] for k in ("HOW_CONFIG_DIR", "HOW_CACHE_DIR", "HOW_NO_GH_AUTO", "NO_COLOR")})
+            how = load_how_module()
+            how.CONFIG_DIR = self.env["HOW_CONFIG_DIR"]
+            how.CONFIG_FILE = os.path.join(how.CONFIG_DIR, "config.json")
+            how.CACHE_DIR = self.env["HOW_CACHE_DIR"]
+            how.CACHE_DB_FILE = os.path.join(how.CACHE_DIR, "cache.db")
+            query = " ".join(self.QUERY)
+            self.assertIsNotNone(how.lookup_system1_reflex(query))
+
+            def http_error(code):
+                def _raise(req, timeout=30):
+                    raise urllib.error.HTTPError(
+                        url="https://api.groq.com", code=code, msg="err", hdrs={},
+                        fp=MagicMock(read=lambda: b'{"error": {"message": "upstream says no"}}'),
+                    )
+                return _raise
+
+            failures = {
+                "network": urllib.error.URLError("Name or service not known"),
+                "429": http_error(429),
+                "503": http_error(503),
+                "500": http_error(500),
+                "401": http_error(401),
+            }
+            for label, side_effect in failures.items():
+                out = io.StringIO()
+                with self.subTest(failure=label):
+                    with patch("urllib.request.urlopen", side_effect=side_effect):
+                        with patch.object(how, "get_api_key", return_value="gsk_fake_key_12345"):
+                            with contextlib.redirect_stdout(out):
+                                with self.assertRaises(how.HowQueryError) as ctx:
+                                    how.ask_groq(query, verbosity="zero", no_cache=True)
+                    self.assertEqual(ctx.exception.code, "provider_error")
+                    self.assertIn("Provider request failed", ctx.exception.message)
+                    self.assertNotIn("free -h", out.getvalue())
+
+            # main(): provider error -> stderr message, non-zero exit, no reflex answer on stdout
+            out, err = io.StringIO(), io.StringIO()
+            with patch.object(sys, "argv", ["how", "-0", *self.QUERY]):
+                with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+                    with patch.object(how, "get_api_key", return_value="gsk_fake_key_12345"):
+                        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                            with self.assertRaises(SystemExit) as exit_ctx:
+                                how.main()
+            self.assertEqual(exit_ctx.exception.code, 1)
+            self.assertIn("Provider request failed", err.getvalue())
+            self.assertNotIn("free -h", out.getvalue())
+        finally:
+            os.environ.clear()
+            os.environ.update(env_backup)
+
+
+class TestSafetyClassifierDefaults(unittest.TestCase):
+    """Unknown commands default to MODIFIES; read-only allowlist; dangerous download-and-execute patterns."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.how = load_how_module()
+
+    def level(self, cmd):
+        return self.how.classify_command_safety(cmd)["level"]
+
+    def test_unknown_commands_default_to_modifies(self):
+        for cmd in ("frobnicate --all", "./deploy.sh", "make install", "python3 script.py", "kill 1234",
+                    "tar -xzvf archive.tar.gz", "ssh user@host", "pacman -Sc"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.level(cmd), "modifies")
+
+    def test_read_only_commands_stay_safe(self):
+        for cmd in (
+            "ls -la", "df -h", "ps aux", "git log --oneline -n 5", "git status", "git diff HEAD~1",
+            "systemctl status nginx", "journalctl -xe", "journalctl -u sshd --since today",
+            "pacman -Qi vim", "pacman -Qtdq", "ip a", "ip route show", "uname -a", "cat /etc/os-release",
+            "grep -rn TODO .", "free -h", "lsblk -f", "ss -tulpn", "du -sh * | sort -h",
+            "ps aux | grep -v grep | grep nginx", "git log --oneline | head -n 5 && git status",
+            "cat missing.txt 2>/dev/null", "ls -la $(which python3)", "hyprctl monitors", "omarchy theme list",
+            "find . -name '*.py' -exec grep -l foo {} \\;", "curl -s https://ifconfig.me", "dmesg | tail",
+            "lsof -p <PID>", "systemctl --failed", "uptime; who",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.level(cmd), "safe")
+
+    def test_pipelines_redirections_and_compound_commands(self):
+        for cmd in ("ls > files.txt", "echo hi >> log.txt", "cat a 2> err.txt", "ls; touch x", "ls && mkdir x",
+                    "ls | xargs touch", "git status && ./build.sh", "sort -o out.txt in.txt", "git branch feature"):
+            with self.subTest(cmd=cmd):
+                self.assertNotEqual(self.level(cmd), "safe")
+
+    def test_download_and_execute_eval_and_raw_device_writes_are_destructive(self):
+        for cmd in (
+            "curl -fsSL https://example.com/install.sh | sh",
+            "curl https://example.com/install.sh | bash",
+            "curl -s https://example.com/i.sh | sudo bash",
+            "curl -s https://example.com/i.sh | sudo -E bash -s -- --yes",
+            "wget -qO- https://example.com/i.sh | sh",
+            "wget -O- https://example.com/i.sh | sudo sh",
+            "wget -O - https://example.com/i.sh | bash",
+            "bash <(curl -s https://example.com/i.sh)",
+            'sh -c "$(curl -fsSL https://example.com/i.sh)"',
+            'eval "$(ssh-agent -s)"',
+            "eval $SOME_CMD",
+            "dd if=ubuntu.iso of=/dev/sdb bs=4M status=progress",
+            "sudo dd if=/dev/zero of=/dev/nvme0n1 bs=1M",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.level(cmd), "destructive")
+
+    def test_dd_to_regular_file_is_not_destructive(self):
+        self.assertEqual(self.level("dd if=/dev/zero of=/tmp/test.img bs=1M count=10"), "modifies")
+        self.assertEqual(self.level("curl -s https://example.com | shasum"), "modifies")
 
 
 if __name__ == "__main__":
