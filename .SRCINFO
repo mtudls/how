@@ -1,6 +1,6 @@
 pkgbase = how-omarchy
 	pkgdesc = Ask in plain words, get one terminal command with a safety badge (Omarchy/Arch)
-	pkgver = 1.0.0
+	pkgver = 1.0.1
 	pkgrel = 1
 	url = https://github.com/mtudls/how
 	arch = any
@@ -12,7 +12,7 @@ pkgbase = how-omarchy
 	provides = how
 	conflicts = how
 	conflicts = how-cli
-	source = how-omarchy-1.0.0.tar.gz::https://github.com/mtudls/how/archive/refs/tags/v1.0.0.tar.gz
+	source = how-omarchy-1.0.1.tar.gz::https://github.com/mtudls/how/archive/refs/tags/v1.0.1.tar.gz
 	sha256sums = SKIP
 
 pkgname = how-omarchy

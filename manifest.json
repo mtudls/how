@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.mdsyseng.how",
   "name": "how",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Mateusz Dzielinski",
   "license": "MIT",
   "description": "Ask in plain words, get one terminal command with a safety badge. Enabling the plugin links ~/.local/bin/how to this checkout, so omarchy plugin update also updates how.",

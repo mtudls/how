@@ -10,7 +10,7 @@
 # packaging/README.md. 'SKIP' below is replaced there; never publish it as is.
 
 pkgname=how-omarchy
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Ask in plain words, get one terminal command with a safety badge (Omarchy/Arch)"
 arch=('any')
