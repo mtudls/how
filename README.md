@@ -4,20 +4,12 @@ Ask in plain words, get one terminal command with a safety badge, copied to your
 You are straight back at your own prompt: paste it, edit it, or type `how run`.
 Nothing runs, and nothing leaves your machine, without you seeing it first.
 
-````console
+```console
 $ how to find largest files here
-
-how ❯ (model: openai/gpt-oss-120b)
-
-```bash
-du -ah . | sort -rh | head -20
-```
-Lists the 20 largest files and folders under the current directory.
-Suggested command: [safe · reads only] [copied to clipboard: paste Ctrl+Shift+V] • run: how run • dissect: how explain • rate: how good/bad
   du -ah . | sort -rh | head -20
-
+  safe · Lists the 20 largest files and folders under the current directory.
 $ █
-````
+```
 
 `how` is a single Python file with no dependencies beyond the standard library (Python 3.9+).
 It is built for [Omarchy](https://omarchy.org) and Arch Linux, and works on any Linux with a terminal.
@@ -81,8 +73,8 @@ how good                           # rate the last answer
 how bad "wrong flag for btrfs"     # rate it, with a note
 ```
 
-Asking never runs anything and never holds your terminal: `how` streams the answer as it arrives, then shows
-the suggested command with its badge, copies the command
+Asking never runs anything and never holds your terminal: `how` prints two lines (the command, then its
+badge and a short note), copies the command
 (with `wl-copy`, `xclip` or `xsel`) and exits. Paste it at your prompt, or type `how run`.
 `how run` shows the command again and waits: **Enter** runs it (safe only), **c** copies it, **e** explains it, **q** quits.
 

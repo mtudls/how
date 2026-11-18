@@ -57,6 +57,10 @@ class TestInteractive(HowTestCase):
                 except OSError:  # child closed the terminal
                     break
 
+    def plain_lines(self):
+        text = re.sub(r"\x1b\[[0-9;]*m", "", self.output.replace("\r", ""))
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
     def send(self, keys):
         os.write(self.master, keys.encode())
 
@@ -73,28 +77,42 @@ class TestInteractive(HowTestCase):
         self.assertNotIn("Traceback", self.output)
         return code
 
-    def test_asking_shows_copies_and_returns_without_a_prompt(self):
+    def test_asking_shows_two_quiet_lines_copies_and_returns_without_a_prompt(self):
         target = self.tmp / "made"
         self.spawn("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.assertEqual(self.finish(), 0)
-        self.assertIn("unsafe", self.output)
-        self.assertIn("copied", self.output)
-        self.assertNotRegex(self.output, r"\] run|type run")
+        lines = self.plain_lines()
+        self.assertEqual(lines[0], f"touch {target}")
+        self.assertRegex(lines[1], r"^unsafe \(.+\) · Creates a file\.$")
+        self.assertEqual(len(lines), 2)
+        self.assertNotRegex(self.output, r"\] run|type run|thinking|how ❯|Suggested")
         self.assertFalse(target.exists())
         self.assertEqual(self.clipboard.read_text(), f"touch {target}")
-        self.assertEqual([e["event"] for e in self.log_entries()], ["answer", "copy"])
+        self.assertEqual(sorted(e["event"] for e in self.log_entries()), ["answer", "copy"])
 
-    def test_answer_is_streamed_under_the_how_header_then_suggested(self):
+    def test_answer_is_streamed_command_first_then_badge_and_note(self):
         self.spawn("to", "list", "files", stream=["```bash\nls", " -la\n```\n", "Lists all files, ", "including hidden ones."])
         self.assertEqual(self.finish(), 0)
         self.assertTrue(self.api.requests[0]["body"]["stream"])
-        self.assertRegex(self.output, r"how ❯.*\(model: ")
-        self.assertIn("Lists all files, including hidden ones.", self.output)
-        self.assertRegex(self.output, r"Suggested command:.*safe.*copied to clipboard.*how run")
-        self.assertNotRegex(self.output, r"\] run|type run")
+        lines = self.plain_lines()
+        self.assertEqual(lines, ["ls -la", "safe · Lists all files, including hidden ones."])
         self.assertEqual(self.clipboard.read_text(), "ls -la")
-        self.assertEqual(self.how("log", "--path").returncode, 0)
-        self.assertEqual([e["event"] for e in self.log_entries()], ["answer", "copy"])
+
+    def test_a_clipboard_tool_that_stays_in_the_background_does_not_slow_the_answer(self):
+        # wl-copy keeps a process alive to serve the selection; how must not wait for it.
+        (self.bin / "wl-copy").write_text(f"#!/bin/sh\ncat > '{self.clipboard}'\nsleep 5 &\n")
+        started = time.time()
+        self.spawn("to", "list", answer="```bash\nls\n```\nLists files.")
+        self.assertEqual(self.finish(), 0)
+        self.assertLess(time.time() - started, 3)
+        self.assertEqual(self.clipboard.read_text(), "ls")
+        self.assertNotIn("not copied", self.output)
+
+    def test_no_clipboard_tool_is_said_once(self):
+        (self.bin / "wl-copy").unlink()
+        self.spawn("to", "list", answer="```bash\nls\n```\nLists files.")
+        self.assertEqual(self.finish(), 0)
+        self.assertIn("not copied", self.output)
 
     def test_streamed_dont_know_is_not_shown_as_an_answer(self):
         self.spawn("to", "frobnicate", stream=["I don't", " know"])
