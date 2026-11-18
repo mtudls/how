@@ -45,13 +45,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the oldest supported version; 3.x is the newest release.
-        python: ['3.9', '3.x']
+        # 3.9 is the oldest supported version; 3 is the newest release.
+        # Official Python images, because hosted runners no longer ship 3.9.
+        python: ['3.9', '3']
+    container: python:${{ matrix.python }}-slim
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
       - name: Unit tests
         run: python3 -m unittest discover -s tests -v
       - name: CLI smoke
