@@ -20,7 +20,7 @@ Pick one channel. The package is recommended: it upgrades with the rest of your 
 
 **1. AUR package `how-omarchy` (recommended)**
 
-> Not on the AUR yet: the package will be published there after the 1.0.0 release.
+> Not on the AUR yet: the package will be published there after the first release.
 > Until then, use the plugin or the install script.
 
 <!-- install:package -->

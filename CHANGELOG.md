@@ -6,7 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-11-18
+## [1.0.1] - 2026-11-18
+
+First release of the rewrite. The `v1.0.0` tag was created before the rewrite was merged and contains
+the 0.6.6 code; use 1.0.1 or later.
 
 A distilled rewrite. `how` is again one small Python file: ask in plain words, get one command with a
 safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for what was cut and why.
@@ -86,7 +89,7 @@ safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for
 - **Updates.** Run `how update` to see which channel you are on and how it updates. Package installs
   update with `omarchy update`; plugin installs with `omarchy plugin update io.github.mdsyseng.how`.
 - **Package name.** The package is `how-omarchy` (`how` and `how-cli` are other projects on the AUR).
-  It is published to the AUR after the 1.0.0 release.
+  It is published to the AUR after the first release.
 
 ## [0.6.6] - 2026-11-18
 
@@ -106,5 +109,5 @@ safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for
   exits 1 instead of answering from the offline engine. `how reflex`, `--offline` and `--reflex` still
   work when asked for explicitly.
 
-[1.0.0]: https://github.com/mtudls/how/compare/v0.6.6...v1.0.0
-[0.6.6]: https://github.com/mtudls/how/compare/v0.6.5...v0.6.6
+[1.0.1]: https://github.com/mtudls/how/compare/v1.0.0...v1.0.1
+[0.6.6]: https://github.com/mtudls/how/compare/v0.6.5...v1.0.0

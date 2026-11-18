@@ -22,7 +22,7 @@
 
 set -euo pipefail
 
-HOW_DEFAULT_VERSION="v1.0.0"
+HOW_DEFAULT_VERSION="v1.0.1"
 HOW_REPO="mtudls/how"
 
 main() {

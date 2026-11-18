@@ -33,7 +33,7 @@ yay -S how-omarchy                  # or, on Omarchy: omarchy pkg aur add how-om
 
 The package is named `how-omarchy` because `how` and `how-cli` are already taken on the AUR by unrelated
 projects that also install `/usr/bin/how`; it declares `conflicts=('how' 'how-cli')`.
-**It is not on the AUR yet**: the owner publishes it once, after the 1.0.0 release. Until then, use the
+**It is not on the AUR yet**: the owner publishes it once, after the first release. Until then, use the
 plugin or the install script.
 
 The package depends only on `python`, with `wl-clipboard`, `xclip` or `xsel` as optional dependencies for
