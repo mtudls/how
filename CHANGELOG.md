@@ -23,7 +23,7 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
   answer for up to three seconds.
 - Terminal control characters in model output are dropped before printing.
 - `how run` runs the last command after a prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
-- Confirmation by badge: Enter runs safe, unsafe needs `y`, dangerous needs the word `run` and shows the reason.
+- Confirmation by badge: Enter runs safe, `changes` needs `y`, dangerous needs the word `run` and shows the reason.
 - `how key` to store the API key (hidden input, file mode 0600).
 - `how log [N]` and `how log --path` for the local JSON-lines log in `$XDG_STATE_HOME/how/how.log`
   (rotates at 1 MiB).
@@ -44,8 +44,8 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 
 ### Changed
 
-- Safety levels are `safe`, `unsafe` and `dangerous` (was `destructive`). The badge is computed only by
-  local rules; unknown commands are unsafe.
+- Safety levels are `safe`, `changes` and `dangerous` (was `destructive`). The badge is computed only by
+  local rules; unknown commands are `changes`.
 - `how good` / `how bad [note]` record the rating in the local log. Sharing it is a separate step: `how`
   shows the exact text and, after `y`, opens a pre-filled GitHub issue that you submit yourself.
 - `how explain [command]` makes one API call and returns a short breakdown with the badge
@@ -104,9 +104,9 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 - Repository moved from `mdsyseng/how` to `mtudls/how`; URLs in the script, packaging and docs updated.
 - `install.sh`, `PKGBUILD` and the release workflow ship the plain Python script from a tagged release.
   The Rust launcher is no longer installed, packaged or released.
-- Unknown commands are classified as "unsafe" unless every segment is a known read-only command.
+- Unknown commands are classified as "changes" unless every segment is a known read-only command.
   `curl`/`wget` piped to a shell, `eval` and `dd of=/dev/*` are classified as destructive;
-  `dd` to a regular file is "unsafe".
+  `dd` to a regular file is "changes".
 - `--json` errors return `ok: false` with an `error` object (`code`, `message`, `hint`).
 
 ### Removed

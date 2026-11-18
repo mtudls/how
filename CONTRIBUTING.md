@@ -29,11 +29,11 @@ temporary directory and stub the API.
 
 1. Write the test first. Add the command and its expected level to `tests/test_classify.py`,
    including at least one look-alike that must keep a different level
-   (for example `git status` safe next to `git stash drop` unsafe).
+   (for example `git status` safe next to `git stash drop` `changes`).
 2. Make the smallest change in `classify()` or its allowlists in `how`.
    - A read-only allowlist entry must be read-only for **every** flag the tool accepts, or list the
      read-only subcommands explicitly.
-   - When in doubt, leave it unsafe. Never widen safe to fix an unsafe that is merely inconvenient.
+   - When in doubt, leave it `changes`. Never widen safe to fix a `changes` that is merely inconvenient.
 3. Run the full test suite.
 
 A harmful command shown as safe is a security bug: report it privately as described in [SECURITY.md](SECURITY.md)

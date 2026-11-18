@@ -98,11 +98,11 @@ Every command gets one of three badges:
 | Badge | Meaning | To run it with `how run` |
 |---|---|---|
 | safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
-| unsafe | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
+| changes | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
 | dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run** and press Enter; the reason is shown, and Enter alone quits |
 
 The badge is computed on your machine by fixed rules. The model never decides it.
-Anything the rules do not recognise is unsafe. A command is safe only if every segment of every pipeline,
+Anything the rules do not recognise is `changes`. A command is safe only if every segment of every pipeline,
 `&&`, `;` and subshell is a known read-only command; writing output to a file (other than `/dev/null`) is never safe.
 
 The command shown is exactly the command executed, through your `$SHELL -c`, in your terminal.
@@ -193,8 +193,8 @@ showing it. The installer is short and does one thing, but if you want to see it
 `HOW_API_URL=https://api.example.com/v1/chat/completions HOW_MODEL=model-name how ...`.
 Your question is then sent to that host instead; `how privacy` shows which.
 
-**Why did a harmless command show unsafe?** The rules mark a command safe only when they know every part of it is
-read-only. An unfamiliar tool, a file redirect (`>`), or an unusual subcommand makes it unsafe. That is deliberate.
+**Why did a harmless command show `changes`?** The rules mark a command safe only when they know every part of it is
+read-only. An unfamiliar tool, a file redirect (`>`), or an unusual subcommand makes it `changes`. That is deliberate.
 If you think a command should be safe, open an issue or a pull request with a test (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 **I saw safe on a command that changes or destroys something.** That is a security bug. Please report it privately;

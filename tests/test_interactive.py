@@ -81,7 +81,7 @@ class TestInteractive(HowTestCase):
         target = self.tmp / "made"
         self.spawn("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.assertEqual(self.finish(), 0)
-        self.assertEqual(self.plain_lines(), [f"touch {target}  unsafe"])
+        self.assertEqual(self.plain_lines(), [f"touch {target}  changes"])
         self.assertNotIn("\r", self.output.replace("\r\n", "\n"))  # nothing is redrawn
         self.assertFalse(target.exists())
         self.assertEqual(self.clipboard.read_text(), f"touch {target}")
@@ -137,7 +137,7 @@ class TestInteractive(HowTestCase):
         self.assertEqual(self.log_entries()[-1]["event"], "run")
         self.assertEqual(self.log_entries()[-1]["exit_code"], 0)
 
-    def test_run_unsafe_ignores_enter_and_runs_on_y(self):
+    def test_run_changes_ignores_enter_and_runs_on_y(self):
         target = self.tmp / "made"
         self.ask_then_run("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.expect(r"\[y\] run")
@@ -173,7 +173,7 @@ class TestInteractive(HowTestCase):
         target = self.tmp / "made"
         self.spawn("-y", "to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates.")
         self.assertEqual(self.finish(), 0)
-        self.assertIn("unsafe", self.output)
+        self.assertIn("changes", self.output)
         self.assertFalse(target.exists())
 
     def test_run_nonzero_exit_is_reported(self):
