@@ -143,8 +143,9 @@ class TestPrivacy(ApiTestCase):
         self.assertEqual(request.get_header("Authorization"), f"Bearer {FAKE_KEY}")
 
     def test_machine_string_is_os_and_shell_only(self):
-        self.assertTrue(how.machine().endswith(", zsh"))
-        self.assertEqual(how.machine().count(","), 1 + how.machine().split(",")[0].count(","))
+        _, shell = how.machine().rsplit(", ", 1)
+        self.assertEqual(shell, "zsh")
+        self.assertNotIn(os.environ["HOME"], how.machine())
 
     def test_privacy_command_names_host_and_files(self):
         code, out, _ = self.run_main("privacy")

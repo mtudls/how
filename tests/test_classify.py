@@ -36,7 +36,7 @@ class TestClassify(unittest.TestCase):
             "lsof -p <PID>", "uptime; who", "LC_ALL=C sort file", "time du -sh .", "watch -n 1 free -h",
             "git branch -a", "git remote -v", "docker ps", "kubectl get pods", "last -x shutdown",
             "find . -type f -size +100M", "wc -l < notes.txt", "ufw status", "sed -n 1,5p file", "ls 2>&1 | less",
-            "nvidia-smi", "rg --version",
+            "nvidia-smi", "rg --version", "hyprctl -j monitors", "crontab -l",
         ])
 
     def test_dangerous_patterns(self):
@@ -68,6 +68,7 @@ class TestClassify(unittest.TestCase):
             "curl -s https://example.com | shasum", "curl -o file https://x", "systemctl restart nginx",
             "git commit -m x", "npm install", "rm notes.txt", "sudo du -sh /var",
             "date -s 2020-01-01", "find . -fprint out", "ls `touch x`",
+            "hyprctl -j dispatch exec foo", "crontab -l -r", "crontab -r",
         ])
 
     def test_reason_is_returned(self):

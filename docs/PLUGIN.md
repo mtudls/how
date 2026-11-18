@@ -43,7 +43,7 @@ copying. It builds from the `v<pkgver>` tag tarball of this repository, runs `ho
 - `/usr/share/licenses/how-omarchy/LICENSE`
 - `/usr/share/doc/how-omarchy/README.md`
 
-<!-- TODO(packaging): confirm the release workflow replaces sha256sums=('SKIP') with the tag tarball's real sha256 before the PKGBUILD is published, and describe the AUR publication step (manual first push by the owner; AUR_SSH_PRIVATE_KEY secret afterwards). PKGBUILD refers to packaging/README.md, which does not exist yet. -->
+The repository keeps `sha256sums=('SKIP')`. On a `vX.Y.Z` tag the release workflow pins the tag tarball's real SHA-256 into the released `PKGBUILD` and `.SRCINFO`, and pushes them to the AUR only when the `AUR_SSH_PRIVATE_KEY` repository secret exists. The one-time owner steps (AUR account, key, secret) are in [packaging/README.md](../packaging/README.md).
 
 ### Update flow
 
@@ -87,7 +87,7 @@ omarchy plugin remove io.github.mdsyseng.how
 rm -f ~/.local/bin/how
 ```
 
-<!-- TODO(packaging): confirm whether `omarchy plugin remove` deletes the ~/.local/bin/how symlink itself (if so, drop the rm line here, in README and in `how uninstall`). -->
+Omarchy has no plugin-removal hook, so `omarchy plugin remove` leaves the `~/.local/bin/how` link dangling; the `rm` line removes it.
 
 ## Install script
 
@@ -106,7 +106,7 @@ It never uses sudo, never edits shell rc files, and installs no cron job, hook o
 Options: `--dry-run`, `--version vX.Y.Z` (or `HOW_VERSION`), `--force`, `--local` (development),
 `--uninstall [--purge]`. `install.sh --help` lists them.
 
-<!-- TODO(packaging): checksum file name. install.sh and the current release workflow use SHA256SUMS.txt, while `how update` (SCRIPT_UPDATE in how) downloads SHA256SUMS. One of them must change. -->
+The checksum file is `SHA256SUMS.txt`, attached to every GitHub release. `how update` does not download anything itself: after you confirm, it re-runs the published installer, which does the verification.
 
 ### Update flow
 
@@ -119,4 +119,4 @@ The version must match in `how` (`__version__`), `PKGBUILD` and `.SRCINFO` (`pkg
 (`version`) and `install.sh` (`HOW_DEFAULT_VERSION`). `python3 scripts/check_release.py vX.Y.Z` checks this
 and validates `manifest.json`. A `vX.Y.Z` tag triggers the release workflow.
 
-<!-- TODO(packaging): release workflow outputs (assets attached to the GitHub release, checksum file) and the step that publishes the PKGBUILD to the AUR. -->
+The release workflow checks that the versions agree, runs the tests, and creates the GitHub release with `how`, `install.sh`, `PKGBUILD`, `.SRCINFO` and `SHA256SUMS.txt` attached. It then build-tests the package in an Arch container and, if the AUR secret is configured, publishes it.

@@ -208,7 +208,7 @@ def read_key(prompt: str) -> str:
         line = sys.stdin.readline()
         return (line.strip()[:1].lower() or "\n") if line else ""
     try:
-        tty.setcbreak(fd)
+        tty.setcbreak(fd, termios.TCSANOW)  # TCSANOW: keep keys typed before the prompt appeared
         data = os.read(fd, 8)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
@@ -361,7 +361,7 @@ READ_ONLY_SUBCOMMANDS = {
                 "cluster-info", "config view", "config get-contexts", "config current-context", "auth can-i"),
     "hyprctl": ("monitors", "clients", "workspaces", "activeworkspace", "activewindow", "devices", "version",
                 "getoption", "binds", "layers", "instances", "systeminfo", "splash", "cursorpos", "animations",
-                "globalshortcuts", "decorations", "workspacerules", "rollinglog", "layouts", "configerrors", "-j"),
+                "globalshortcuts", "decorations", "workspacerules", "rollinglog", "layouts", "configerrors"),
     "mise": ("ls", "list", "current", "where", "which", "doctor", "version", "env", "ls-remote", "outdated",
              "config ls", "settings get", "tasks ls"),
     "npm": ("ls", "list", "view", "info", "outdated", "version", "config get", "root", "prefix", "search",
@@ -377,7 +377,6 @@ READ_ONLY_SUBCOMMANDS = {
     "tmux": ("ls", "list-sessions", "list-windows", "list-panes", "list-keys", "list-clients", "show-options",
              "display-message", "info"),
     "ufw": ("status",),
-    "crontab": ("-l",),
     "flatpak": ("list", "info", "search", "remotes", "history"),
     "snap": ("list", "info", "find", "version"),
     "brew": ("list", "info", "search", "outdated", "deps", "config", "doctor", "leaves"),
@@ -476,6 +475,8 @@ def segment_is_read_only(tokens: list[str]) -> bool:
                      "ls", "search", "doctor", "which", "commands"} & {a.lower() for a in args})
     if binary == "git":
         return git_is_read_only(args)
+    if binary == "crontab":
+        return "-l" in args and not {"-r", "-e", "-i"} & set(args)
     if binary in READ_ONLY_BINARIES:
         bad = WRITE_ARGS.get(binary, ())
         if any(a in bad or a.split("=")[0] in bad for a in args):
@@ -603,7 +604,8 @@ def chat(messages: list[dict]) -> str:
         "Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": f"how/{__version__}"})
     debug(f"POST {api_url()} model={body['model']}")
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # nosec B310 - fixed https URL or user's HOW_API_URL
+        # The URL is the fixed https API_URL, or the user's own HOW_API_URL.
+        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # nosec B310
             data = json.load(response)
     except urllib.error.HTTPError as e:
         raise http_error(e) from None
@@ -778,19 +780,24 @@ PROMPTS = {
     "dangerous": "type run + Enter to run · c copy · e explain · Enter quits: ",
 }
 
+RUN_KEYS = {"safe": ("\n", "y"), "modifies": ("y",), "dangerous": ("run",)}
+
 
 def prompt_loop(question: str, command: str, level: str) -> int:
     while True:
         prompt = paint(PROMPTS[level], "dim")
         choice = ask_line(prompt).lower() if level == "dangerous" else read_key(prompt)
-        if (level == "safe" and choice in ("\n", "y")) or (level == "modifies" and choice == "y") or choice == "run":
+        if choice in RUN_KEYS[level]:
             return execute(question, command, level, "run")
         if choice == "\n" and level == "modifies":
             print(paint("  this one changes something: press y to run it", "yellow"))
         elif choice == "c":
             print(paint("  copied" if copy_to_clipboard(command) else "  no clipboard tool (install wl-clipboard)", "dim"))
         elif choice == "e":
-            explain_and_print(command)
+            try:
+                explain_and_print(command)
+            except HowError as e:  # a failed explanation should not lose the command
+                err(paint(f"  how: {e.message} ({e.hint})", "yellow", stream=sys.stderr))
         elif choice in ("q", "\x1b", "") or level == "dangerous":
             log_event("run", question=question, command=command, safety=level, action="quit")
             return 0
@@ -805,7 +812,8 @@ def execute(question: str, command: str, level: str, action: str, event: str = "
     debug(f"running via {shell} -c")
     previous = signal.signal(signal.SIGINT, lambda *_: None)
     try:
-        process = subprocess.Popen([shell, "-c", command])  # nosec B603 - the user saw and confirmed this exact command
+        # The one place a shell runs model output: the user saw this exact command and confirmed it.
+        process = subprocess.Popen([shell, "-c", command])  # nosec B603
         code = process.wait()
     finally:
         signal.signal(signal.SIGINT, previous)

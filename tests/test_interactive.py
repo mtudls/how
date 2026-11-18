@@ -16,21 +16,24 @@ LAUNCHER = "import os,sys; os.close(os.open(os.ttyname(0), os.O_RDWR)); os.execv
 
 @unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "needs a pty")
 class TestInteractive(HowTestCase):
-    def spawn(self, *args, answer):
-        self.with_api().answer(answer)
+    def spawn(self, *args, answer, then=()):
+        api = self.with_api()
+        for content in (answer, *then):
+            api.answer(content)
         master, slave = os.openpty()
         self.proc = subprocess.Popen([sys.executable, "-c", LAUNCHER, sys.executable, str(HOW), *args],
                                      stdin=slave, stdout=slave, stderr=slave, env={**self.env, "TERM": "xterm"},
                                      start_new_session=True)
         os.close(slave)
         self.master, self.output = master, ""
-        self.addCleanup(self.cleanup)
+        self.addCleanup(self.cleanup, self.proc, master)
 
-    def cleanup(self):
-        if self.proc.poll() is None:
-            self.proc.kill()
-        self.proc.wait()
-        os.close(self.master)
+    @staticmethod
+    def cleanup(proc, master):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        os.close(master)
 
     def expect(self, pattern, timeout=10):
         deadline = time.time() + timeout
@@ -110,6 +113,15 @@ class TestInteractive(HowTestCase):
         self.send("\r")
         self.expect("exited with 1")
         self.assertEqual(self.finish(), 1)
+
+    def test_explain_then_quit(self):
+        self.spawn("to", "list", answer="```bash\nls -la\n```\nLists.", then=["-la — long listing\nEffect: none."])
+        self.expect(r"\[Enter\] run")
+        self.send("e")
+        self.expect(r"Effect: none\.[\s\S]*\[Enter\] run")
+        self.send("q")
+        self.assertEqual(self.finish(), 0)
+        self.assertEqual(self.log_entries()[-1]["action"], "quit")
 
     def test_ctrl_c_at_prompt_exits_130_quietly(self):
         self.spawn("to", "list", answer="```bash\nls\n```\nLists.")
