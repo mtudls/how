@@ -77,26 +77,27 @@ class TestInteractive(HowTestCase):
         self.assertNotIn("Traceback", self.output)
         return code
 
-    def test_asking_shows_two_quiet_lines_copies_and_returns_without_a_prompt(self):
+    def test_asking_prints_one_line_once_copies_and_returns_without_a_prompt(self):
         target = self.tmp / "made"
         self.spawn("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.assertEqual(self.finish(), 0)
-        lines = self.plain_lines()
-        self.assertEqual(lines[0], f"touch {target}")
-        self.assertRegex(lines[1], r"^unsafe \(.+\) · Creates a file\.$")
-        self.assertEqual(len(lines), 2)
-        self.assertNotRegex(self.output, r"\] run|type run|thinking|how ❯|Suggested")
+        self.assertEqual(self.plain_lines(), [f"touch {target}  unsafe"])
+        self.assertNotIn("\r", self.output.replace("\r\n", "\n"))  # nothing is redrawn
         self.assertFalse(target.exists())
         self.assertEqual(self.clipboard.read_text(), f"touch {target}")
         self.assertEqual(sorted(e["event"] for e in self.log_entries()), ["answer", "copy"])
 
-    def test_answer_is_streamed_command_first_then_badge_and_note(self):
+    def test_the_command_is_shown_as_soon_as_it_is_complete_and_the_rest_is_not_waited_for(self):
         self.spawn("to", "list", "files", stream=["```bash\nls", " -la\n```\n", "Lists all files, ", "including hidden ones."])
         self.assertEqual(self.finish(), 0)
         self.assertTrue(self.api.requests[0]["body"]["stream"])
-        lines = self.plain_lines()
-        self.assertEqual(lines, ["ls -la", "safe · Lists all files, including hidden ones."])
+        self.assertEqual(self.plain_lines(), ["ls -la  safe"])
         self.assertEqual(self.clipboard.read_text(), "ls -la")
+
+    def test_a_plain_answer_is_printed_once(self):
+        self.spawn("what", "is", "a", "shell", stream=["A shell is a program ", "that runs your commands."])
+        self.assertEqual(self.finish(), 0)
+        self.assertEqual(self.plain_lines(), ["A shell is a program that runs your commands."])
 
     def test_a_clipboard_tool_that_stays_in_the_background_does_not_slow_the_answer(self):
         # wl-copy keeps a process alive to serve the selection; how must not wait for it.
@@ -121,9 +122,9 @@ class TestInteractive(HowTestCase):
         self.assertEqual(self.output.count("I don't know"), 1)  # only the error line
 
     def test_control_characters_from_the_model_are_dropped(self):
-        self.spawn("to", "list", stream=["```bash\nls\n```\nLists \x1b[31mfiles\x07."])
+        self.spawn("to", "list", stream=["```bash\nls \x1b[31m-la\x07\n```\n"])
         self.assertEqual(self.finish(), 0)
-        self.assertIn("Lists [31mfiles.", self.output)
+        self.assertEqual(self.plain_lines(), ["ls [31m-la  safe"])
 
     def test_run_safe_runs_on_enter(self):
         self.ask_then_run("to", "say", "hi", answer="```bash\nprintf 'ran-%s\\n' ok\n```\nPrints a marker.")

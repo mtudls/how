@@ -55,7 +55,7 @@ Reply EXACTLY in this format:
 ```bash
 <one command, or a short && chain>
 ```
-<one or two short sentences: what it does>
+Nothing else: no explanation, no comments.
 If the question is not a task, answer in one short sentence without a code block.
 If you are not sure or the tool does not exist, reply exactly: I don't know"""
 
@@ -573,7 +573,8 @@ def clean(text: str) -> str:
 
 
 def read_stream(response, on_text) -> str:
-    """Reads a server-sent-events reply, handing each piece of text to on_text as it arrives."""
+    """Reads a server-sent-events reply, handing each piece of text to on_text as it arrives.
+    on_text may return True to stop early."""
     parts = []
     for raw in response:
         line = raw.decode("utf-8", "replace").strip()
@@ -589,7 +590,8 @@ def read_stream(response, on_text) -> str:
         piece = clean(piece)
         if piece:
             parts.append(piece)
-            on_text(piece)
+            if on_text(piece):  # the caller has all it needs: stop reading
+                break
     return "".join(parts).strip()
 
 
@@ -757,58 +759,34 @@ def cmd_ask(question: str, opts: dict) -> int:
 
 
 class LiveWriter:
-    """Two quiet lines, shown as the reply streams in: the command (copied to the clipboard the
-    moment it is complete), then its badge and the note. Nothing else, and nothing before the
-    command is known, so a bare "I don't know" is never flashed as an answer."""
+    """One line, printed once: the command, with its badge at the end. Nothing is shown while
+    waiting and nothing moves afterwards. The command is printed and copied the moment its code
+    block is complete, and the rest of the reply is not waited for."""
 
     BLOCK = re.compile(r"```[\w+-]*[ \t]*\n(.*?)```", re.S)
 
     def __init__(self, question: str):
-        self.question, self.text, self.command, self.shown = question, "", None, 0
+        self.question, self.text, self.done = question, "", False
 
-    def write(self, piece: str) -> None:
+    def write(self, piece: str) -> bool:
+        """Returns True once the command has been shown, so the caller can stop reading."""
         self.text += piece
-        if self.command is None:
-            block = self.BLOCK.search(self.text)
-            if not block:
-                return
-            self.command = join_lines(block.group(1)) or ""
-            self.shown = block.end()
-            self.show_command()
-        self.show_note()
-
-    def show_command(self) -> None:
-        if not self.command:
-            return
-        level, reason = classify(self.command)
-        print("  " + paint(self.command, "bold"))
-        label = paint(level, BADGE_COLORS[level], "bold")
-        if level != "safe":
-            label += paint(f" ({reason})", "dim")
-        if copy_to_clipboard(self.command):
-            log_event("copy", question=self.question, command=self.command, safety=level, action="copy")
-        else:
-            label += paint(" · not copied (install wl-clipboard)", "dim")
-        sys.stdout.write("  " + label)
-        sys.stdout.flush()
-
-    def show_note(self) -> None:
-        rest = " ".join(self.text[self.shown:].split("\n"))
-        if self.shown == self.BLOCK.search(self.text).end():
-            rest = rest.lstrip()
-            if not rest:
-                return
-            rest = " · " + rest
-        self.shown = len(self.text)
-        sys.stdout.write(paint(rest, "dim"))
-        sys.stdout.flush()
+        block = None if self.done else self.BLOCK.search(self.text)
+        command = join_lines(block.group(1)) if block else None
+        if command:
+            self.done = True
+            level, _ = classify(command)
+            line = "  " + paint(command, "bold") + "  " + paint(level, BADGE_COLORS[level], "bold")
+            if copy_to_clipboard(command):
+                log_event("copy", question=self.question, command=command, safety=level, action="copy")
+            else:
+                line += paint("  (not copied: install wl-clipboard)", "dim")
+            print(line, flush=True)
+        return self.done
 
     def finish(self, answer: Answer) -> None:
-        if self.command is None:  # no command in the reply: a plain one-sentence answer
+        if not self.done:  # no command in the reply: a plain one-sentence answer
             print(answer.note)
-        else:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
 
 
 def json_result(question: str, answer: Optional[Answer], level: Optional[str], reason: str,
