@@ -1,275 +1,212 @@
 # how
 
-Ask in plain words. Get the exact terminal command.
+Ask in plain words, get one terminal command with a safety badge, and run it with one keypress.
+Nothing runs, and nothing leaves your machine, without you seeing it first.
 
-Built for **Omarchy**, **Linux**, and your local project stack.
+```console
+$ how to find largest files here
+🟢 safe · reads only
+  du -ah . | sort -rh | head -20
+  Lists the 20 largest files and folders under the current directory.
+[Enter] run · [c] copy · [e] explain · [q] quit
+```
 
-> **Document Guide:**
-> - **Part 1 — `[LIVE • v0.6]`**: Everyday commands and core features you can use right now (`✅`).
-> - **Part 2 — `[LIVE • v0.6]`**: System-1 Offline Reflex, Repeat-Question Memory, `how where` Spatial Locator, Traffic-Light Safety, and Closed-Loop ASI (`✅`).
-> - *Technical details (**way / form**) are inside expandable `▸` sections.*
+`how` is a single Python file with no dependencies beyond the standard library (Python 3.9+).
+It is built for [Omarchy](https://omarchy.org) and Arch Linux, and works on any Linux with a terminal.
 
----
+## Install
 
-# Part 1 — `[LIVE • v0.6]` What `how` Does Today
+Pick one channel. The package is recommended: it upgrades with the rest of your system.
 
-## Quick Start (Zero-Setup Out of the Box)
+**1. AUR package `how-omarchy` (recommended)**
 
+> Not on the AUR yet: the package will be published there after the 1.0.0 release.
+> Until then, use the plugin or the install script.
+
+<!-- install:package -->
 ```bash
-# Option A — Install via Omarchy Plugin CLI (console-only, zero bar icons):
+yay -S how-omarchy                  # or, on Omarchy: omarchy pkg aur add how-omarchy
+```
+
+**2. Omarchy plugin**
+
+<!-- install:plugin -->
+```bash
 omarchy plugin add https://github.com/mtudls/how.git --enable
-
-# Option B — Install as an Arch / Omarchy Package (makepkg / pacman):
-git clone https://github.com/mtudls/how.git && cd how && makepkg -si
-
-# Option C — Direct CLI install:
-git clone https://github.com/mtudls/how.git && cd how
-./install.sh                    # Installs `how` (a single Python script) to ~/.local/bin — works immediately with 0 setup!
-eval "$(how shell-init bash)"   # Optional: bind Alt+H to replace `# query` in-place in your shell prompt
-how auth login                  # Optional: add free Groq LPU key ($0, no card): console.groq.com/keys
 ```
 
-> **Zero-Setup Cascade (`v0.6`):** Even before you run `how auth login`, `how` works immediately out of the box using:
-> 1. **Layer 1 (`<1 ms` Offline):** Personal episodic history (`commands.log`) + System-1 Reflex KB with dynamic parameter slot filling (`<port>`, `<PID>`, `<size>`, `<service>`) + local `# omarchy:*` & `tldr` recipe extraction.
-> 2. **Layer 2 (`Zero-Key Cloud Auto-Discovery`):** Automatically reuses your existing `gh` CLI login (`~/.config/gh/hosts.yml` / `gh auth token` → GitHub Models), `CEREBRAS_API_KEY` (Cerebras WSE), or `GEMINI_API_KEY` (Gemini Flash-Lite + Google Search Grounding) if present.
-> 3. **Layer 3 (`Alt+H` Readline Prompt Injection):** Type `# kill process on port 3000` in your prompt and press **`Alt+H`** to replace the prompt buffer in-place.
+Enabling the plugin makes `~/.local/bin/how` a link into the plugin checkout. It steps aside if the package is installed.
 
-## Everyday Use (Effect → Command)
+**3. Install script**
 
-| Status | Effect (What you get) | Command (What to type) |
-| :---: | :--- | :--- |
-| ✅ `LIVE` | **Command + short explanation + `🟢/🟡/🔴` safety badge** | `how to switch audio output` |
-| ✅ `LIVE` | **Command only (no extra text)** | `how -0 to find largest files` |
-| ✅ `LIVE` | **In-place shell prompt replacement (`Alt+H` keybinding)** | `eval "$(how shell-init bash)"` *(then type `# query` + `Alt+H`)* |
-| ✅ `LIVE` | **Offline `<3 ms` System-1 reflex (zero network)** | `how --offline to check memory usage` *(or `how reflex ...`)* |
-| ✅ `LIVE` | **Offline `<5 ms` spatial locator for configs, logs & ports** | `how where hyprland monitor config` *(or `how -0 where pacman.conf`)* |
-| ✅ `LIVE` | **Stateless structured JSON output for AI agents (AX)** | `how --json to check memory usage` |
-| ✅ `LIVE` | **Offline `<1 ms` visual pipeline & flag breakdown** | `how explain` *(or `how explain "tar -xzvf a.tgz"`)* |
-| ✅ `LIVE` | **Instant command repair & error diagnostics** | `how fix` *(or `how fix "permission denied"`)* |
-| ✅ `LIVE` | **Run the last suggested command (with safety check)** | `how run` *(or `how !`)* |
-| ✅ `LIVE` | **Solve a hard bug or boot issue** | `how -t why does suspend freeze my screen` |
-| ✅ `LIVE` | **Preview what `how` would read (zero execution)** | `how --dry-run to update system` |
-| ✅ `LIVE` | **Auto-read OS & project stack (with receipt)** | `how --yolo to run single test file` |
-| ✅ `LIVE` | **See health, active models, and settings** | `how status` |
-| ✅ `LIVE` | **Report a broken command or idea** | `how feedback "audio command failed"` |
+<!-- install:script -->
+```bash
+curl -fsSL https://github.com/mtudls/how/releases/latest/download/install.sh | bash
+```
 
-<details>
-<summary><b>▸ Way / Form: All CLI commands, flags & file paths</b></summary>
+The installer downloads `how` from one pinned release tag, refuses to install it unless its SHA-256 matches the
+release's checksum file, and puts it in `~/.local/bin/how`. It never uses sudo, never edits your shell files and
+installs no background updater. Add `-s -- --dry-run` to see what it would do, or download `install.sh` and read it
+before running `bash install.sh`.
+
+Then check the result with `how doctor`.
+
+## First run
+
+`how` needs an API key. Groq offers a free one at [console.groq.com/keys](https://console.groq.com/keys).
 
 ```bash
-# Output style & command anatomy
-how -0 <query>                    # Command only (also copied to clipboard)
-how --low <query>                 # Command + 1-sentence note
-how verbosity [zero|low|normal]   # Set default output style
-how explain [command...]          # Offline <1ms pipeline & flag breakdown + safety badge
-how fix [error...]                # Diagnose & repair the last command (offline rules + AI fallback)
-how run [-y|--dry-run]            # Preview safety badge or execute the last suggested command
-
-# Privacy & system context
-how context                       # View current context permissions
-how context careful               # Ask step-by-step with [dry-run] preview (default)
-how context yolo                  # Auto-read OS/stack and print what was read (🔎 Read: ...)
-how context dry-run               # Show exact read-only commands without running them
-how context off                   # Disable all OS and project discovery
-
-# Speed vs. Deep Thinking
-how --fast <query>                # Force instant response
-how -t <query>                    # Force deep reasoning model (--think / --deep)
-how triage [on|off|<query>]       # Auto-route hard questions to deep thinking
-how model                         # Pick or benchmark fast models
-how model think <provider:model>  # Pick deep model (groq, gemini, anthropic, openai, cli)
-
-# Cache & history
-how cache [30m|3h|7D|1M|off]      # Set how long answers are remembered
-how cache clear                   # Wipe saved answers
-how --no-cache <query>            # Ask fresh, ignoring saved answers
-how history [filter]              # View past suggested commands
-how bash-history [on|off]         # Append suggestions to ~/.bash_history
-
-# Build, JSON & self-test
-how --json <query>                # Emit stateless deterministic JSON for AI agents (AX)
-how build                         # Experimental, dev-only: replaces installed `how` with a Rust build (needs checkout + rustc)
-how test [--stats]                # Run self-test and speed benchmark
+how key        # paste the key; input is hidden, the file is stored with mode 0600
+how doctor     # confirms the key is present and the API is reachable
 ```
 
-**Local files:**
-- Settings: `~/.config/how/config.json` (`0600` permissions)
-- Command log: `~/.config/how/commands.log`
-- Answer cache: `~/.cache/how/cache.db` (SQLite WAL)
+You can also set `GROQ_API_KEY` in your environment instead.
 
-</details>
-
----
-
-## Core Capabilities (`[LIVE • v0.5]`)
-
-### ✅ 1. Fast Startup with Readable Code
-**Effect:** Starts the moment you press Enter, while keeping the source code a single, readable Python file anyone can edit.
-
-<details>
-<summary><b>▸ Way / Form: Single-file Python (optional experimental Rust transpiler)</b></summary>
-
-- Source of truth: [`how`](how) (zero-dependency Python standard library). `./install.sh`, the PKGBUILD and GitHub releases all install this script as-is.
-- Experimental, dev-only: [`scripts/transpile_rust.py`](scripts/transpile_rust.py) parses the Python AST and compiles a native Rust binary (`rustc -C opt-level=3 -C strip=symbols`) with **zero LLM calls** and **zero external crates**; fast paths (`--help`, `--version`, `context dry-run`) run in native Rust (`~1 ms`) and everything else delegates to the embedded Python source. It is used in CI checks but is not installed or shipped.
-
-</details>
-
-### ✅ 2. System-Aware — On Your Terms
-**Effect:** Gives commands that match your Linux distro, package manager, and project folder—asking permission before reading anything.
-
-<details>
-<summary><b>▸ Way / Form: Graduated context modes (`careful` / `yolo` / `dry-run`)</b></summary>
-
-- **5 read-only checks:** `os_release`, `kernel`, `desktop`, `shell_pkg`, and `stack`.
-- **`careful` (default):** Prompts step-by-step and shows the `[dry-run] $ ...` shell command before reading.
-- **`yolo` (`how context yolo` / `--yolo`):** Reads OS, project manifests, and local CLI docs immediately and prints a receipt:
-  `🔎 Read: OS[/etc/os-release, uname], Stack[Cargo.toml], Docs[tldr:pacman]`
-- **`dry-run` (`how context dry-run` / `--dry-run`):** Prints every check and triage route with zero execution and zero network calls.
-- Never reads `.env`, secrets, or private keys.
-
-</details>
-
-### ✅ 3. Multi-Step Pre-IDK Escalation, Local RAG & Traffic-Light Safety
-**Effect:** Repairs typos, grounds commands in your local `man`/`tldr` docs, escalates to a smarter reasoning model on your platform of choice before ever saying `"I don't know"`, and labels every command `🟢 SAFE`, `🟡 MODIFIES`, or `🔴 DESTRUCTIVE / ADMIN`.
-
-<details>
-<summary><b>▸ Way / Form: Pre-IDK escalation, Bubblewrap (`bwrap`) sandbox, `explain`/`fix` & repeat-aware cache</b></summary>
-
-- **2-Step Escalation Before `"I don't know"`:**
-  1. **Step 1 (Question Refinement & Domain Grounding):** Repairs CLI typos (`maske symlik` → `create a symbolic link with ln -s`), expands terse shorthand (`to see origin` → `to see git remote origin url`), attaches Linux/Arch/Hyprland/Omarchy domain hints, and pulls newly matched local `tldr`/`man` pages.
-  2. **Step 2 (Smarter Model on Platform of Choice):** If still uncertain, reaches out to your configured reasoning provider (`gemini`, `anthropic`, `openai`, `openrouter`, `cli:claude`, or Groq's `openai/gpt-oss-120b` / `openai/gpt-oss-20b` / `qwen/qwen3.8-27b` pool). Uncertain `"I don't know"` responses are never cached.
-- **Traffic-Light Command Safety & `how explain` / `how fix` (`<1 ms` offline):**
-  - `classify_command_safety` badges every command as `🟢 SAFE (read-only)`, `🟡 MODIFIES`, or `🔴 DESTRUCTIVE / ADMIN`.
-  - `how explain [cmd]` splits pipelines (`|`, `&&`, `||`, `;`) into stages and explains each binary and flag offline in `<1 ms`.
-  - `how fix [error]` diagnoses common failures offline (`permission denied`, `/var/lib/pacman/db.lck`, missing git upstream, Limine Secure Boot, port conflicts) or escalates to deep mode.
-- **Local documentation priority (<5 ms):**
-  1. `# omarchy:*` header comments in `/usr/bin/omarchy-*` scripts (parsed as text, never executed).
-  2. Local `tldr` pages.
-  3. System `man -P cat <cmd>` synopsis.
-  4. Isolated Bubblewrap sandbox (`bwrap --ro-bind / / --unshare-all --cap-drop ALL -- timeout 2 <cmd> --help`).
-- **Repeat-Aware Sliding SQLite Cache:** Stores verified answers in `~/.cache/how/cache.db` (`3h` default TTL, renewed on hit) and tracks `hit_count` to surface `how explain` / `how fix` / `how -t` tips when a query is repeated.
-- **Output Sanitization:** Strips ANSI/OSC terminal escape sequences from model outputs.
-
-</details>
-
-### ✅ 4. 5-Axis Product Convergence Suite (`how test`)
-**Effect:** One command checks speed, Pre-IDK intelligence, UX safety badges, cache memory, and 100-query benchmark convergence locally before you commit—backed by automated GitHub Actions gates.
-
-<details>
-<summary><b>▸ Way / Form: 5-axis V&V scorecard & Free-Plan CI pipelines</b></summary>
-
-- Run `how test --stats`, `python3 tests/test_vv_suite.py`, or `python3 tests/test_safety.py -v`.
-- CI workflows (`.github/workflows/*.yml`) use `concurrency` (`cancel-in-progress: true`), `timeout-minutes: 5`, and single-VM consolidation to run V&V, `ruff`, `flake8`, `shellcheck`, `bandit`, `gitleaks`, and tagged GitHub releases of the `how` script.
-- See [`docs/ASI.md`](docs/ASI.md) and [`docs/requirements.md`](docs/requirements.md) for historical details.
-
-</details>
-
----
----
-
-# Part 2 — `[LIVE • v0.6]` System-1 Reflex, `how where` Locator & Closed-Loop ASI
-
-| Status | Capability | Effect (What it does for you) |
-| :---: | :--- | :--- |
-| ✅ `LIVE` | **1. System-1 Offline Reflex (`basal` / `jev`)** | Answers everyday Linux/Omarchy commands in `<3 ms` offline (`how --offline` / `how reflex` / `--reflex`). |
-| ✅ `LIVE` | **2. Repeat-Question Memory** | Detects when you ask the same question twice and asks if the previous command failed (`[Y]`/`[e]`/`[n]` in TTY, 30m window). |
-| ✅ `LIVE` | **3. `how where` Spatial Locator & Multi-Intent Routing** | Finds *where* any file, config, log, binary, or port is (`how where ...`) alongside `how fix`, `how explain`, and `how !`. |
-| ✅ `LIVE` | **4. Normie Safety Traffic Lights** | Labels every command `🟢 Safe`, `🟡 Modifies files`, or `🔴 Destructive / Admin` (`how run` requires typing `yes` for 🔴). |
-| ✅ `LIVE` | **5. Closed-Loop Autonomous ASI** | Validates bounded `SEARCH/REPLACE` patches against 4 hard gates, rolls back regressions, and opens verified PRs. |
-
----
-
-### ✅ 1. System-1 Models (`basal`, `jev`) + Cloud LLM Hybrid (`[LIVE — v0.6]`)
-**Effect:** Common everyday tasks resolve locally in `<3 ms` with zero internet needed, while novel or tricky questions automatically step up to fast or deep cloud LLMs.
-
-<details>
-<summary><b>▸ Way / Form: 3-Tier System-1 / System-2 routing architecture</b></summary>
-
-- **Tier 0 — Local System-1 Reflex (`<3 ms`, `lookup_system1_reflex`):**
-  - Classifies user intent (`classify_query_intent`: `how` vs `where` vs `fix` vs `explain`).
-  - Scores command danger (`read-only` vs `mutating` vs `destructive`).
-  - Synthesizes canonical commands for 75+ common Linux, Arch/pacman, systemd, Git, Docker, Hyprland, and Omarchy operations offline (`how --offline <query>` or `how reflex <query>`).
-- **Tier 1 — Fast Cloud LPU (`~150 ms`, Groq):**
-  - Combines local `tldr`/`man`/`omarchy-*` RAG with fast LPU generation for custom flags.
-- **Tier 2 — Deep Thinking (`~1–3 s`, `-t` / `--think`):**
-  - Routes multi-step debugging (bootloaders, kernel modules, Wayland/PipeWire) to reasoning models (`openai/gpt-oss-120b`, `Claude`, `Gemini`, `OpenAI`).
-
-</details>
-
-### ✅ 2. Repeat-Question Memory ("Did the previous answer not work?") (`[LIVE — v0.5+]`)
-**Effect:** If you ask the same question again within minutes, `how` won't blindly repeat the same cached command—it will ask if the first one failed and offer a deeper fix.
-
-<details>
-<summary><b>▸ Way / Form: SQLite `hit_count` tracking & interactive escalation prompt</b></summary>
-
-- Tracks `hit_count` and `last_hit_at` in `~/.cache/how/cache.db`. When re-asked within 30 minutes in an interactive TTY:
-  ```text
-  ? You asked this 2m ago. Did the previous command not work?
-    [Y] Try a fresh Deep Thinking solution (-t --no-cache)
-    [e] Attach last terminal error / exit code and fix it
-    [n] Show the cached command again
-  ```
-  Non-interactive shells and `HOW_NO_REPEAT_PROMPT=1` keep the tip-only behavior.
-
-</details>
-
-### ✅ 3. Beyond Procedural `how` — Spatial (`where`), Diagnostic (`fix`), and Anatomy (`explain`) (`[LIVE — v0.6]`)
-**Effect:** Use `how` not only to learn **how** to do anything, but also to find **where** any file, config, log, or port lives, **explain** any pipeline, or **fix** your last failed command.
-
-<details>
-<summary><b>▸ Way / Form: `where` local probes & multi-intent routing in `how`</b></summary>
+## Everyday use
 
 ```bash
-how to switch audio output             # Procedural: how to do X
-how where is hyprland monitor config   # Spatial: locate file, config, log, binary, or port (<5ms)
-how -0 where pacman.conf               # Path only (/etc/pacman.conf)
-how fix                                # Diagnostic: inspect last failed command & propose fix
-how !                                  # Action: preview & execute last suggested command
+how to find largest files here     # ask; a leading "to" is fine
+how run                            # run the last suggested command (same confirmation rules)
+how explain                        # short breakdown of the last command
+how explain "tar -xzvf a.tgz"      # ...or of any command you paste
+how good                           # rate the last answer
+how bad "wrong flag for btrfs"     # rate it, with a note
 ```
 
-- **`where` Engine (`locate_where_targets`):** Combines curated Omarchy/Hyprland/Arch config & log paths with live read-only local probes (`~/.config/*`, `$PATH` via `shutil.which`, and socket ports) to return the exact path and a `🟢 SAFE` inspect command in `<5 ms`.
+After an answer you choose: **Enter** runs it (🟢 only), **c** copies it, **e** explains it, **q** quits.
+When a clipboard tool is installed (`wl-copy`, `xclip` or `xsel`), the command is copied automatically.
 
-</details>
+Flags go before the question:
 
-### ✅ 4. Dual-Persona UX: Simplest "Normie" User × Systems Programmer (`[LIVE — v0.5+]`)
-**Effect:** Beginners get plain-English safety ratings and zero-jargon explanations, while systems programmers keep sub-millisecond native speed and strict sandboxing.
+| Flag | Effect |
+|---|---|
+| `-y`, `--yes` | Run without asking, but only when the badge is 🟢 |
+| `-n`, `--no-run` | Never prompt; print the command and copy it |
+| `--json` | Print one JSON object on stdout; never prompts, never runs |
+| `--debug` | Verbose diagnostics on stderr |
 
-<details>
-<summary><b>▸ Way / Form: Traffic-light risk classifier & flag explainer</b></summary>
+When stdout is not a terminal (for example `how to list ports | less`), `how` prints only the command on
+stdout, puts the badge and note on stderr, and never prompts.
 
-- **Traffic-Light Risk Badges:**
-  - `🟢 Safe (read-only)` — only inspects info (`ls`, `df`, `ip`, `pacman -Si`)
-  - `🟡 Modifies files/packages` — edits configs or installs packages (`pacman -S`, `cp`, `sed -i`)
-  - `🔴 Destructive / Admin` — deletes data or alters boot/disks (`rm -rf`, `dd`, `mkfs`); requires typing `yes` in `how run` / `how !`.
-- **Plain-English Flag Breakdown (`how explain`):** Offline `<1 ms` breakdown of each pipeline stage and flag (`-r` = recursive, `-f` = force).
+`how good` and `how bad` record your rating locally. Sharing it is a separate step you confirm (see Privacy).
 
-</details>
+## Safety model
 
-### ✅ 5. Closed-Loop Autonomous Self-Improvement (ASI: `Code → Gate → PR`) (`[LIVE — v0.6]`)
-**Effect:** Instead of just opening advisory GitHub Issues, `how` tests its own optimization patches against 4 hard verification gates and rolls back any regression automatically.
+Every command gets one of three badges:
 
-| ASI Tier | Status | Effect |
-| :--- | :---: | :--- |
-| **1. Human-Assisted Local Loop** (`how test`) | ✅ `LIVE` | Benchmarks `[A] Baseline` vs `[B] WIP`, runs V&V + safety checks, and gives a pass/fail verdict. |
-| **2. Autonomous Cloud Reviewer** (`ai-architect.yml`) | ✅ `LIVE` | Runs weekly on GitHub Actions, analyzes [`how`](how) + V&V scores, and opens a GitHub Issue with proposals. |
-| **3. Closed-Loop Self-Patching** (`Code → Gate → PR`) | ✅ `LIVE` | Applies bounded `SEARCH/REPLACE` patches, enforces 4 hard gates, rolls back regressions, and opens a verified PR. |
+| Badge | Meaning | To run it |
+|---|---|---|
+| 🟢 safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
+| 🟡 modifies | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
+| 🔴 dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run** and press Enter; the reason is shown, and Enter alone quits |
 
-<details>
-<summary><b>▸ Way / Form: Propose → Hard Gate → Verified PR pipeline</b></summary>
+The badge is computed on your machine by fixed rules. The model never decides it.
+Anything the rules do not recognise is 🟡. A command is 🟢 only if every segment of every pipeline,
+`&&`, `;` and subshell is a known read-only command; writing output to a file (other than `/dev/null`) is never 🟢.
 
-1. **Propose (Bounded Diff):** [`scripts/ai_architect_review.py`](scripts/ai_architect_review.py) proposes a minimal SEARCH/REPLACE patch on [`how`](how) (or updates deprecated model IDs / adds regression tests from user `how feedback` issues).
-2. **Hard Verification Gate (Zero Human Trust Required):**
-   - Must transpile and compile via [`scripts/transpile_rust.py`](scripts/transpile_rust.py) with `0` errors.
-   - Must score **`100.0 / 100`** on [`tests/test_vv_suite.py`](tests/test_vv_suite.py).
-   - Must pass **100%** of [`tests/test_safety.py`](tests/test_safety.py) (sandbox, no `eval`/`exec`, no trailing whitespace).
-   - Must pass [`tests/test_ab_bench.py`](tests/test_ab_bench.py) (`Latency <= Baseline`).
-   - *If any gate fails, the patch is automatically reverted and discarded.*
-3. **Deliver (Verified PR):** Only when all 4 gates pass, pushes branch `asi/auto-<date>` and opens a Pull Request with the A/B benchmark table attached.
+The command shown is exactly the command executed, through your `$SHELL -c`, in your terminal.
+If it exits non-zero, `how` tells you and exits with the same code.
 
-</details>
+The badge is a seatbelt, not a guarantee. Read the command before you run it.
+See [docs/DESIGN.md](docs/DESIGN.md) for how the classifier works and where it stops.
 
----
+## Privacy and trust
+
+- **What is sent:** your question, your OS name (for example "Arch Linux"), your shell name, and whether you run Omarchy.
+  Nothing else: no file contents, no history, no environment.
+- **Where:** one HTTPS request per question to `api.groq.com` (or the endpoint in `HOW_API_URL`), carrying your
+  API key and the model name. `how explain` sends the command instead of a question. `how doctor` contacts the
+  same host to check that it answers.
+- **Ratings:** `how good` and `how bad` are noted in your local log. To share one, `how` shows the exact text,
+  and only after you answer `y` opens a pre-filled GitHub issue in your browser, which you submit yourself.
+- **Never:** no telemetry, no background network calls, no update checks.
+- **Your key** is stored locally with mode 0600, never logged, and never printed (at most its last 4 characters).
+
+Check it yourself:
+
+```bash
+how privacy     # exactly what is sent, to which host, and every file how reads or writes
+how log         # the last 20 entries of your local log (how log 50 for more)
+how doctor      # version, install method, key, API reachability, clipboard tool, log path, update channel
+```
+
+## Updates
+
+| Channel | How it updates |
+|---|---|
+| Package `how-omarchy` | With the rest of the system: `omarchy update` |
+| Omarchy plugin | `omarchy plugin update io.github.mdsyseng.how` (`omarchy update` does not update plugins); `~/.local/bin/how` is a link into the plugin checkout |
+| Install script | `how update` re-runs the installer for the latest release after you confirm |
+
+`how update` always tells you which channel you are on and how updates arrive. `how` never checks for updates on its own.
+
+## Uninstall
+
+```bash
+how uninstall   # prints the exact removal commands for your install method; it runs nothing
+```
+
+For example: `yay -Rns how-omarchy` for the package, `omarchy plugin remove io.github.mdsyseng.how` for the
+plugin, or `install.sh --uninstall` (add `--purge` to delete your key and log) for the script.
+Your config and log stay until you delete them; `how uninstall` prints that command too.
+
+## Files and environment
+
+| Path / variable | Purpose |
+|---|---|
+| `~/.config/how/config.json` | API key and model (mode 0600). Honours `$XDG_CONFIG_HOME` |
+| `~/.local/state/how/how.log` | Local log, one JSON object per line (mode 0600). Rotates at 1 MiB to `how.log.1`. Honours `$XDG_STATE_HOME` |
+| `~/.local/state/how/last.json` | The last answer, used by `how run`, `how explain`, `how good`/`bad` |
+| `~/.local/state/how/install-receipt` | Written by the install script, so `install.sh --uninstall` removes only what it installed |
+| `~/.local/state/how/plugin.log` | Written by the Omarchy plugin when it links `~/.local/bin/how` |
+| `/etc/os-release` | Read for your OS name |
+| `GROQ_API_KEY` | API key; used instead of the stored one |
+| `HOW_MODEL` | Model name to request |
+| `HOW_API_URL` | Any OpenAI-compatible chat completions endpoint |
+| `HOW_CONFIG_DIR`, `HOW_STATE_DIR` | Override the config and state directories |
+| `HOW_VERSION`, `HOW_INSTALL_DIR` | Install script only: release tag and target directory |
+| `NO_COLOR` | Disable colour |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Answer shown, and the command (if you ran it) succeeded |
+| `1` | Error: no key, rejected key, rate limit, network or timeout. The message says what to do. `how doctor` also exits 1 when a check fails |
+| `2` | The model said it does not know, or the command line was not understood |
+| `130` | Interrupted with Ctrl-C |
+| other | You ran the command and it failed: `how` exits with the command's own code |
+
+## FAQ
+
+**I have no API key.** Run `how key` and follow the link; Groq's key is free. Without a key, `how` stops with
+a clear message. It never makes up an answer locally. The badge still works: `how explain "some command"` shows it
+without a key.
+
+**Does it work offline?** No. Every answer comes from the API. There is no offline fallback.
+
+**The README pipes `curl` into `bash`, which `how` marks 🔴. Why?** Because it runs code from the network without
+showing it. The installer is short and does one thing, but if you want to see it first, download it, read it, then run it.
+
+**Can I use another provider?** Yes, any OpenAI-compatible endpoint:
+`HOW_API_URL=https://api.example.com/v1/chat/completions HOW_MODEL=model-name how ...`.
+Your question is then sent to that host instead; `how privacy` shows which.
+
+**Why did a harmless command show 🟡?** The rules mark a command 🟢 only when they know every part of it is
+read-only. An unfamiliar tool, a file redirect (`>`), or an unusual subcommand makes it 🟡. That is deliberate.
+If you think a command should be 🟢, open an issue or a pull request with a test (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+**I saw 🟢 on a command that changes or destroys something.** That is a security bug. Please report it privately;
+see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+`how` stays one file, standard library only. See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-[MIT License](LICENSE) © 2026 Mateusz Dzieliński.
+MIT. See [LICENSE](LICENSE).

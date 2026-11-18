@@ -1,31 +1,34 @@
-name: Bug Report or Feedback
-description: Report a broken command suggestion, incorrect flag, or unexpected CLI behavior.
+name: Bug report
+description: A wrong or unsafe suggestion, a wrong safety badge, or a CLI/installation problem.
 labels: ["bug", "needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve `how`! We aim for zero-friction command generation on Omarchy & Linux.
+        Thanks for helping improve `how`. Please do not paste your API key or anything private.
   - type: input
-    id: query
+    id: question
     attributes:
-      label: Query executed
-      description: The exact command or question you asked `how`.
-      placeholder: e.g. how to switch audio output with pactl
+      label: What you asked
+      placeholder: how to find the largest files here
     validations:
       required: true
   - type: textarea
-    id: output
+    id: suggestion
     attributes:
-      label: What did `how` suggest?
-      description: Copy-paste the suggested output.
+      label: What how suggested (command and badge)
+      description: Copy the command and its badge (safe / modifies / dangerous).
+      render: text
   - type: textarea
     id: expected
     attributes:
-      label: What should the correct/working command be?
-      description: (Optional) If you know the actual command or how the tool should have answered.
+      label: What you expected
+      description: The command you would have used, or why the badge is wrong.
   - type: textarea
-    id: environment
+    id: doctor
     attributes:
-      label: Environment
-      description: Linux distribution / window manager (e.g. Omarchy, Hyprland, Arch, Ubuntu).
+      label: Output of `how doctor`
+      description: Shows version, install method (package / plugin / script) and OS. It never prints your key.
+      render: text
+    validations:
+      required: true

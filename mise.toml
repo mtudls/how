@@ -1,46 +1,56 @@
 # how — project tasks.
 #
-#   mise tasks                  list everything below
-#   mise run test               run all tests
-#   mise run build              dev-only: build the experimental Rust binary ./how-bin (not installed or shipped)
-#   mise run install            install `how` (the Python script) on this machine
-#   mise run release 0.6.6      bump version, test, commit, tag, push (CI publishes the release)
+#   mise tasks                   list everything below
+#   mise run test                run the unit tests
+#   mise run lint                ruff, flake8, shellcheck, version/manifest check (whatever is installed)
+#   mise run install             install ./how from this checkout to ~/.local/bin (install.sh --local)
+#   mise run release 1.0.1       bump the version everywhere, test, commit and tag LOCALLY.
+#                                It never pushes: it prints the push command for you to run.
 
 [tasks.test]
 description = "Run all tests"
 run = "python3 -m unittest discover -s tests"
 
-[tasks.build]
-description = "Dev-only: build the experimental Rust binary ./how-bin (install/package/release ship the Python script)"
-run = "python3 scripts/transpile_rust.py how -o how-bin && ./how-bin --version"
+[tasks.lint]
+description = "Lint Python and shell (skips tools that are not installed), check versions and manifest.json"
+run = '''
+set -euo pipefail
+python3 -m py_compile how scripts/check_release.py
+bash -n install.sh scripts/plugin-link.sh
+if command -v ruff >/dev/null; then ruff check how scripts/ tests/; else echo "- ruff not installed, skipped"; fi
+if command -v flake8 >/dev/null; then flake8 --max-line-length=120 --extend-ignore=E501 how scripts/ tests/; else echo "- flake8 not installed, skipped"; fi
+if command -v shellcheck >/dev/null; then shellcheck install.sh scripts/plugin-link.sh; else echo "- shellcheck not installed, skipped"; fi
+python3 scripts/check_release.py
+'''
 
 [tasks.install]
-description = "Install how on this machine"
-run = "./install.sh"
+description = "Install how from this checkout to ~/.local/bin"
+run = "./install.sh --local"
 
 [tasks.release]
-description = "Release a version: mise run release 0.6.6"
-usage = 'arg "<version>" help="e.g. 0.6.6"'
+description = "Prepare a release locally: mise run release 1.0.1 (bump, test, commit, tag; never pushes)"
+usage = 'arg "<version>" help="e.g. 1.0.1"'
 run = '''
 set -euo pipefail
 v="${usage_version#v}"
 git diff --quiet HEAD || { echo "✗ commit or stash your changes first"; exit 1; }
+if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then echo "✗ tag v$v already exists"; exit 1; fi
 
-# 1. Version lives in three files — keep them in sync.
-sed -i "s/^__version__ = \".*\"/__version__ = \"$v\"/" how
-sed -i "s/^pkgver=.*/pkgver=$v/" PKGBUILD
-sed -i "s/\"version\": \".*\"/\"version\": \"$v\"/" manifest.json
+# 1. One version, five places: how, PKGBUILD, .SRCINFO, manifest.json, install.sh.
+python3 scripts/check_release.py --bump "$v"
 
 # 2. Never ship red.
 python3 -m unittest discover -s tests
+python3 scripts/check_release.py "v$v"
 
-# 3. Commit (if anything changed) and tag (if not tagged yet).
-git diff --quiet || git commit -am "chore(release): v$v"
-git rev-parse -q --verify "refs/tags/v$v" >/dev/null || git tag "v$v"
+# 3. Commit and tag locally.
+git commit -am "chore(release): v$v"
+git tag -a "v$v" -m "how v$v"
 
-# 4. Push branch + tag, and fast-forward main. The tag triggers .github/workflows/release.yml.
-git push origin HEAD "v$v"
-git push origin HEAD:main
-
-echo "✓ released v$v"
+branch="$(git rev-parse --abbrev-ref HEAD)"
+echo
+echo "✓ v$v is committed and tagged locally. Nothing was pushed."
+echo "  Review it (git show v$v), then publish with:"
+echo "    git push origin $branch v$v"
+echo "  The tag runs .github/workflows/release.yml (GitHub release, SHA256SUMS, AUR if configured)."
 '''

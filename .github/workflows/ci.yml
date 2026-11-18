@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff, flake8, shellcheck, py_compile, versions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install linters
+        run: pip install ruff flake8
+      - name: py_compile
+        run: python -m py_compile how scripts/check_release.py tests/*.py
+      - name: ruff
+        run: ruff check how scripts/ tests/
+      - name: flake8
+        run: flake8 --max-line-length=120 --extend-ignore=E501 how scripts/ tests/
+      - name: shellcheck (preinstalled on the runner)
+        run: |
+          bash -n install.sh scripts/plugin-link.sh
+          shellcheck install.sh scripts/plugin-link.sh
+      - name: Versions agree and manifest.json is a valid Omarchy plugin manifest
+        run: python scripts/check_release.py
+
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the oldest supported version; 3 is the newest release.
+        # Official Python images, because hosted runners no longer ship 3.9.
+        python: ['3.9', '3']
+    container: python:${{ matrix.python }}-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: CLI smoke
+        run: |
+          python3 how --version
+          python3 how --help >/dev/null
+
+  security:
+    name: Security (bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install bandit
+      # B404/B603/B607: running the user-confirmed command via subprocess is the product.
+      # B310: urlopen is only called with the configured https API URL.
+      - run: bandit -ll --skip B310,B404,B603,B607 how
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # gitleaks-action lists PR commits on pull_request events
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  arch:
+    name: Arch smoke (install.sh, plugin link, PKGBUILD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: pacman -Syu --noconfirm --needed python namcap
+      - name: Unprivileged user
+        run: |
+          useradd -m builder
+          cp -r "$GITHUB_WORKSPACE" /home/builder/how
+          chown -R builder:builder /home/builder/how
+      - name: install.sh --local, dry run and uninstall (as a normal user)
+        run: |
+          su builder -c '
+            set -euxo pipefail
+            cd ~/how
+            export HOW_INSTALL_DIR=$HOME/.local/bin PATH=$HOME/.local/bin:$PATH
+            ./install.sh --local --dry-run
+            test ! -e "$HOW_INSTALL_DIR/how"
+            ./install.sh --local
+            test -x "$HOW_INSTALL_DIR/how" && test ! -L "$HOW_INSTALL_DIR/how"
+            how --version
+            ./install.sh --local            # idempotent re-install
+            ./install.sh --uninstall
+            test ! -e "$HOW_INSTALL_DIR/how"
+          '
+      - name: Plugin link (what Service.qml runs on enable)
+        run: |
+          su builder -c '
+            set -euxo pipefail
+            plugin=$HOME/.config/omarchy/plugins/io.github.mdsyseng.how
+            mkdir -p "$(dirname "$plugin")" && cp -r ~/how "$plugin"
+            bash "$plugin/scripts/plugin-link.sh" "$plugin"
+            test "$(readlink ~/.local/bin/how)" = "$plugin/how"
+            out="$(bash "$plugin/scripts/plugin-link.sh" "$plugin")"
+            [[ $out == *"already links"* ]]
+            ~/.local/bin/how --version
+          '
+      - name: .SRCINFO matches PKGBUILD; namcap
+        run: |
+          su builder -c 'cd ~/how && makepkg --printsrcinfo' > /tmp/srcinfo
+          diff -u .SRCINFO /tmp/srcinfo
+          namcap PKGBUILD
