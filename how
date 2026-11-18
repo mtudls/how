@@ -966,8 +966,8 @@ def install_method(path: Optional[str] = None) -> tuple[str, str]:
     return "script", real
 
 
-SCRIPT_UPDATE = (f'cd "$(mktemp -d)" && curl -fsSLO {RELEASE_URL}/install.sh && curl -fsSLO {RELEASE_URL}/SHA256SUMS'
-                 " && sha256sum --check --ignore-missing SHA256SUMS && bash install.sh")
+# The published installer pins its own release and verifies `how` against SHA256SUMS.txt before installing.
+SCRIPT_UPDATE = f"curl -fsSL {RELEASE_URL}/install.sh | bash"
 
 CHANNELS = {
     "package": f"package {PACKAGE}: updates arrive with `omarchy update` (or `yay -Syu`)",
@@ -1026,13 +1026,14 @@ def cmd_update() -> int:
     print(CHANNELS[method])
     if method != "script":
         return 0
-    print(paint("\nThis would download, verify and run the latest installer:\n", "dim") + f"  {SCRIPT_UPDATE}")
+    print(paint("\nThis re-runs the latest release's installer, which verifies the download against\n"
+                "its SHA256SUMS.txt before replacing this file:\n", "dim") + f"  {SCRIPT_UPDATE}")
     if not interactive():
         print(paint("\nRun it yourself, or run how update in a terminal to confirm.", "dim"))
         return 0
     if not confirm("\nRun it now?"):
         return 0
-    return execute("", SCRIPT_UPDATE, "modifies", "script", event="update")
+    return execute("", SCRIPT_UPDATE, classify(SCRIPT_UPDATE)[0], "script", event="update")
 
 
 def cmd_uninstall() -> int:

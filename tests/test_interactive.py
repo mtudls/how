@@ -1,0 +1,122 @@
+"""End-to-end in a real pseudo-terminal: the badge decides which keypress runs the command."""
+
+import os
+import re
+import select
+import subprocess
+import sys
+import time
+import unittest
+
+from helpers import HOW, HowTestCase
+
+# Makes the pty the child's controlling terminal (so Ctrl-C sends SIGINT), then runs `how`.
+LAUNCHER = "import os,sys; os.close(os.open(os.ttyname(0), os.O_RDWR)); os.execv(sys.executable, sys.argv[1:])"
+
+
+@unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "needs a pty")
+class TestInteractive(HowTestCase):
+    def spawn(self, *args, answer):
+        self.with_api().answer(answer)
+        master, slave = os.openpty()
+        self.proc = subprocess.Popen([sys.executable, "-c", LAUNCHER, sys.executable, str(HOW), *args],
+                                     stdin=slave, stdout=slave, stderr=slave, env={**self.env, "TERM": "xterm"},
+                                     start_new_session=True)
+        os.close(slave)
+        self.master, self.output = master, ""
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        os.close(self.master)
+
+    def expect(self, pattern, timeout=10):
+        deadline = time.time() + timeout
+        while not re.search(pattern, self.output):
+            if time.time() > deadline:
+                self.fail(f"timed out waiting for {pattern!r}; got:\n{self.output}")
+            if select.select([self.master], [], [], 0.05)[0]:
+                try:
+                    self.output += os.read(self.master, 4096).decode("utf-8", "replace")
+                except OSError:  # child closed the terminal
+                    break
+
+    def send(self, keys):
+        os.write(self.master, keys.encode())
+
+    def finish(self):
+        code = self.proc.wait(timeout=10)
+        self.expect(r"$", timeout=0)
+        self.assertNotIn("Traceback", self.output)
+        return code
+
+    def test_safe_runs_on_enter_and_is_copied(self):
+        self.spawn("to", "say", "hi", answer="```bash\nprintf 'ran-%s\\n' ok\n```\nPrints a marker.")
+        self.expect(r"\[Enter\] run")
+        self.assertIn("🟢 safe", self.output)
+        self.assertIn("copied", self.output)
+        self.send("\r")
+        self.expect("ran-ok")
+        self.assertEqual(self.finish(), 0)
+        self.assertEqual(self.clipboard.read_text(), "printf 'ran-%s\\n' ok")
+        self.assertEqual([e["event"] for e in self.log_entries()], ["answer", "copy", "run"])
+        self.assertEqual(self.log_entries()[-1]["exit_code"], 0)
+
+    def test_modifies_ignores_enter_and_runs_on_y(self):
+        target = self.tmp / "made"
+        self.spawn("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
+        self.expect(r"\[y\] run")
+        self.send("\r")
+        self.expect("press y")
+        self.assertFalse(target.exists())
+        self.send("y")
+        self.assertEqual(self.finish(), 0)
+        self.assertTrue(target.exists())
+
+    def test_dangerous_needs_the_word_run(self):
+        victim = self.tmp / "victim"
+        victim.mkdir()
+        answer = f"```bash\nrm -rf {victim}\n```\nDeletes it."
+        self.spawn("to", "delete", "it", answer=answer)
+        self.expect("type run")
+        self.assertIn("🔴 dangerous", self.output)
+        self.send("y\r")
+        self.assertEqual(self.finish(), 0)
+        self.assertTrue(victim.exists())
+
+        self.spawn("to", "delete", "it", answer=answer)
+        self.expect("type run")
+        self.send("run\r")
+        self.assertEqual(self.finish(), 0)
+        self.assertFalse(victim.exists())
+
+    def test_yes_flag_auto_runs_only_safe(self):
+        self.spawn("-y", "to", "say", "hi", answer="```bash\nprintf 'auto-%s\\n' ran\n```\nPrints.")
+        self.expect("auto-ran")
+        self.assertEqual(self.finish(), 0)
+
+        target = self.tmp / "made"
+        self.spawn("-y", "to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates.")
+        self.expect(r"\[y\] run")
+        self.send("q")
+        self.assertEqual(self.finish(), 0)
+        self.assertFalse(target.exists())
+
+    def test_nonzero_exit_is_reported(self):
+        self.spawn("to", "fail", answer="```bash\nfalse\n```\nFails.")
+        self.expect(r"\[Enter\] run")
+        self.send("\r")
+        self.expect("exited with 1")
+        self.assertEqual(self.finish(), 1)
+
+    def test_ctrl_c_at_prompt_exits_130_quietly(self):
+        self.spawn("to", "list", answer="```bash\nls\n```\nLists.")
+        self.expect(r"\[Enter\] run")
+        self.send("\x03")
+        self.assertEqual(self.finish(), 130)
+
+
+if __name__ == "__main__":
+    unittest.main()

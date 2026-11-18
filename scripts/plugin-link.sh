@@ -41,7 +41,8 @@ main() {
   if [ -L "$target" ]; then
     current="$(readlink "$target" || true)"
     if [ "$current" = "$src" ]; then
-      log "ok: $target already links to $src"
+      # Print only (no log file line): this runs at every shell start.
+      printf '%s\n' "how-plugin ok: $target already links to $src"
       return 0
     fi
     case "$current" in

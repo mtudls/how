@@ -125,7 +125,8 @@ jobs:
             mkdir -p "$(dirname "$plugin")" && cp -r ~/how "$plugin"
             bash "$plugin/scripts/plugin-link.sh" "$plugin"
             test "$(readlink ~/.local/bin/how)" = "$plugin/how"
-            bash "$plugin/scripts/plugin-link.sh" "$plugin" | grep -q "already links"
+            out="$(bash "$plugin/scripts/plugin-link.sh" "$plugin")"
+            [[ $out == *"already links"* ]]
             ~/.local/bin/how --version
           '
       - name: .SRCINFO matches PKGBUILD; namcap

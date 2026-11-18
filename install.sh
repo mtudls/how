@@ -215,7 +215,9 @@ do_install() {
     if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
       here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     fi
-    [ -n "$here" ] && [ -f "$here/how" ] || die "--local needs ./how next to install.sh (run it from a git checkout, not through a pipe)."
+    if [ -z "$here" ] || [ ! -f "$here/how" ]; then
+      die "--local needs ./how next to install.sh (run it from a git checkout, not through a pipe)."
+    fi
     version="local checkout ($here)"
     cp "$here/how" "$tmp/how"
     warn "--local: installing $here/how without checksum verification."
@@ -281,6 +283,16 @@ do_install() {
 
 # ---------------------------------------------------------------- uninstall
 
+# act CMD...: run it and say so, or with --dry-run only say what would run.
+act() {
+  if [ "${DRY_RUN:-0}" -eq 1 ]; then
+    say "would run: $*"
+  else
+    "$@"
+    ok "$*"
+  fi
+}
+
 receipt_get() {
   [ -f "$1" ] || return 0
   awk -F= -v k="$2" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$1"
@@ -289,11 +301,15 @@ receipt_get() {
 uninstall() {
   local install_dir="$1" state_dir="$2" receipt="$3" dry_run="$4" purge="$5"
   local target recorded config_dir
-  local run=""
-  [ "$dry_run" -eq 0 ] || run="echo would run:"
+  DRY_RUN="$dry_run"
 
-  target="$(receipt_get "$receipt" path)"
-  [ -n "$target" ] || target="$install_dir/how"
+  # The receipt names what was installed; an explicit HOW_INSTALL_DIR wins.
+  if [ -n "${HOW_INSTALL_DIR:-}" ]; then
+    target="$install_dir/how"
+  else
+    target="$(receipt_get "$receipt" path)"
+    [ -n "$target" ] || target="$install_dir/how"
+  fi
 
   if [ -L "$target" ]; then
     warn "$target is a symlink ($(readlink "$target")), not a script install - leaving it."
@@ -307,8 +323,7 @@ uninstall() {
       ours=1
     fi
     if [ "$ours" -eq 1 ]; then
-      $run rm -f "$target"
-      [ "$dry_run" -eq 1 ] || ok "removed $target"
+      act rm -f "$target"
     else
       warn "$target does not look like how; leaving it."
     fi
@@ -316,8 +331,8 @@ uninstall() {
     say "No script install found at $target."
   fi
 
-  if [ -f "$receipt" ]; then
-    $run rm -f "$receipt"
+  if [ -f "$receipt" ] && [ "$(receipt_get "$receipt" path)" = "$target" ]; then
+    act rm -f "$receipt"
   fi
 
   if [ -e /usr/bin/how ]; then
@@ -326,8 +341,8 @@ uninstall() {
 
   config_dir="${HOW_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/how}"
   if [ "$purge" -eq 1 ]; then
-    [ ! -d "$config_dir" ] || { $run rm -rf "$config_dir"; [ "$dry_run" -eq 1 ] || ok "removed $config_dir (config, API key)"; }
-    [ ! -d "$state_dir" ] || { $run rm -rf "$state_dir"; [ "$dry_run" -eq 1 ] || ok "removed $state_dir (log, last answer)"; }
+    [ ! -d "$config_dir" ] || act rm -rf "$config_dir"
+    [ ! -d "$state_dir" ] || act rm -rf "$state_dir"
   else
     say "Kept your config and history (delete them with --purge):"
     say "  $config_dir"
