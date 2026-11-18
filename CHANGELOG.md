@@ -16,9 +16,9 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 
 ### Added
 
-- Asking prints two quiet lines as the reply streams in: the command, then its badge and a short note.
-  The command is copied to the clipboard the moment it is complete. It returns to your shell prompt and
-  never runs anything. No spinner, no header.
+- Asking prints one line, once: the command, with its badge at the end. Nothing is shown while waiting and
+  nothing moves afterwards. The command is printed and copied the moment it is complete, the rest of the
+  reply is not waited for, and you are back at your shell prompt. Nothing runs. For a breakdown, `how explain`.
 - The clipboard tool is no longer waited on: `wl-copy` stays in the background, which used to stall every
   answer for up to three seconds.
 - Terminal control characters in model output are dropped before printing.

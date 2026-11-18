@@ -6,8 +6,7 @@ Nothing runs, and nothing leaves your machine, without you seeing it first.
 
 ```console
 $ how to find largest files here
-  du -ah . | sort -rh | head -20
-  safe · Lists the 20 largest files and folders under the current directory.
+  du -ah . | sort -rh | head -20  safe
 $ █
 ```
 
@@ -73,8 +72,8 @@ how good                           # rate the last answer
 how bad "wrong flag for btrfs"     # rate it, with a note
 ```
 
-Asking never runs anything and never holds your terminal: `how` prints two lines (the command, then its
-badge and a short note), copies the command
+Asking never runs anything and never holds your terminal: `how` prints one line, once (the command, with its
+badge at the end), copies the command
 (with `wl-copy`, `xclip` or `xsel`) and exits. Paste it at your prompt, or type `how run`.
 `how run` shows the command again and waits: **Enter** runs it (safe only), **c** copies it, **e** explains it, **q** quits.
 
@@ -83,12 +82,12 @@ Flags go before the question:
 | Flag | Effect |
 |---|---|
 | `-y`, `--yes` | Run straight away, but only when the badge is safe |
-| `-n`, `--no-run` | Print only the command on stdout (badge and note go to stderr) and copy it |
+| `-n`, `--no-run` | Print only the command on stdout (the badge goes to stderr) and copy it |
 | `--json` | Print one JSON object on stdout; never prompts, never runs |
 | `--debug` | Verbose diagnostics on stderr |
 
 When stdout is not a terminal (for example `how to list ports | less`), `how` prints only the command on
-stdout, puts the badge and note on stderr, and never prompts.
+stdout, puts the badge on stderr, and never prompts.
 
 `how good` and `how bad` record your rating locally. Sharing it is a separate step you confirm (see Privacy).
 
