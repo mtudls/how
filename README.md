@@ -1,15 +1,23 @@
 # how
 
-Ask in plain words, get one terminal command with a safety badge, and run it with one keypress.
+Ask in plain words, get one terminal command with a safety badge, copied to your clipboard.
+You are straight back at your own prompt: paste it, edit it, or type `how run`.
 Nothing runs, and nothing leaves your machine, without you seeing it first.
 
-```console
+````console
 $ how to find largest files here
-🟢 safe · reads only
-  du -ah . | sort -rh | head -20
-  Lists the 20 largest files and folders under the current directory.
-[Enter] run · [c] copy · [e] explain · [q] quit
+
+how ❯ (model: openai/gpt-oss-120b)
+
+```bash
+du -ah . | sort -rh | head -20
 ```
+Lists the 20 largest files and folders under the current directory.
+Suggested command: [safe · reads only] [copied to clipboard: paste Ctrl+Shift+V] • run: how run • dissect: how explain • rate: how good/bad
+  du -ah . | sort -rh | head -20
+
+$ █
+````
 
 `how` is a single Python file with no dependencies beyond the standard library (Python 3.9+).
 It is built for [Omarchy](https://omarchy.org) and Arch Linux, and works on any Linux with a terminal.
@@ -66,22 +74,24 @@ You can also set `GROQ_API_KEY` in your environment instead.
 
 ```bash
 how to find largest files here     # ask; a leading "to" is fine
-how run                            # run the last suggested command (same confirmation rules)
+how run                            # run the last suggested command, after a keypress
 how explain                        # short breakdown of the last command
 how explain "tar -xzvf a.tgz"      # ...or of any command you paste
 how good                           # rate the last answer
 how bad "wrong flag for btrfs"     # rate it, with a note
 ```
 
-After an answer you choose: **Enter** runs it (🟢 only), **c** copies it, **e** explains it, **q** quits.
-When a clipboard tool is installed (`wl-copy`, `xclip` or `xsel`), the command is copied automatically.
+Asking never runs anything and never holds your terminal: `how` streams the answer as it arrives, then shows
+the suggested command with its badge, copies the command
+(with `wl-copy`, `xclip` or `xsel`) and exits. Paste it at your prompt, or type `how run`.
+`how run` shows the command again and waits: **Enter** runs it (safe only), **c** copies it, **e** explains it, **q** quits.
 
 Flags go before the question:
 
 | Flag | Effect |
 |---|---|
-| `-y`, `--yes` | Run without asking, but only when the badge is 🟢 |
-| `-n`, `--no-run` | Never prompt; print the command and copy it |
+| `-y`, `--yes` | Run straight away, but only when the badge is safe |
+| `-n`, `--no-run` | Print only the command on stdout (badge and note go to stderr) and copy it |
 | `--json` | Print one JSON object on stdout; never prompts, never runs |
 | `--debug` | Verbose diagnostics on stderr |
 
@@ -94,15 +104,15 @@ stdout, puts the badge and note on stderr, and never prompts.
 
 Every command gets one of three badges:
 
-| Badge | Meaning | To run it |
+| Badge | Meaning | To run it with `how run` |
 |---|---|---|
-| 🟢 safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
-| 🟡 modifies | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
-| 🔴 dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run** and press Enter; the reason is shown, and Enter alone quits |
+| safe | Only reads: every part of the command is a known read-only tool | Press **Enter** |
+| unsafe | Changes files, packages or settings, **or is not known to be read-only** | Press **y** (Enter does not run it) |
+| dangerous | Can destroy data or the system: `rm -rf`, `mkfs`, `dd of=/dev/…`, `curl … \| sh`, `git push --force`, `git reset --hard`, … | Type the word **run** and press Enter; the reason is shown, and Enter alone quits |
 
 The badge is computed on your machine by fixed rules. The model never decides it.
-Anything the rules do not recognise is 🟡. A command is 🟢 only if every segment of every pipeline,
-`&&`, `;` and subshell is a known read-only command; writing output to a file (other than `/dev/null`) is never 🟢.
+Anything the rules do not recognise is unsafe. A command is safe only if every segment of every pipeline,
+`&&`, `;` and subshell is a known read-only command; writing output to a file (other than `/dev/null`) is never safe.
 
 The command shown is exactly the command executed, through your `$SHELL -c`, in your terminal.
 If it exits non-zero, `how` tells you and exits with the same code.
@@ -185,18 +195,18 @@ without a key.
 
 **Does it work offline?** No. Every answer comes from the API. There is no offline fallback.
 
-**The README pipes `curl` into `bash`, which `how` marks 🔴. Why?** Because it runs code from the network without
+**The README pipes `curl` into `bash`, which `how` marks dangerous. Why?** Because it runs code from the network without
 showing it. The installer is short and does one thing, but if you want to see it first, download it, read it, then run it.
 
 **Can I use another provider?** Yes, any OpenAI-compatible endpoint:
 `HOW_API_URL=https://api.example.com/v1/chat/completions HOW_MODEL=model-name how ...`.
 Your question is then sent to that host instead; `how privacy` shows which.
 
-**Why did a harmless command show 🟡?** The rules mark a command 🟢 only when they know every part of it is
-read-only. An unfamiliar tool, a file redirect (`>`), or an unusual subcommand makes it 🟡. That is deliberate.
-If you think a command should be 🟢, open an issue or a pull request with a test (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+**Why did a harmless command show unsafe?** The rules mark a command safe only when they know every part of it is
+read-only. An unfamiliar tool, a file redirect (`>`), or an unusual subcommand makes it unsafe. That is deliberate.
+If you think a command should be safe, open an issue or a pull request with a test (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-**I saw 🟢 on a command that changes or destroys something.** That is a security bug. Please report it privately;
+**I saw safe on a command that changes or destroys something.** That is a security bug. Please report it privately;
 see [SECURITY.md](SECURITY.md).
 
 ## Contributing

@@ -17,7 +17,7 @@ body:
     id: suggestion
     attributes:
       label: What how suggested (command and badge)
-      description: Copy the command and its badge (safe / modifies / dangerous).
+      description: Copy the command and its badge (safe / unsafe / dangerous).
       render: text
   - type: textarea
     id: expected

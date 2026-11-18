@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# omarchy:summary=Ask in plain words, get one terminal command with a safety badge; one keypress runs it
+# omarchy:summary=Ask in plain words, get one terminal command with a safety badge, copied to your clipboard
 # omarchy:group=agent
 # omarchy:args=[-y|-n|--json|--debug] <question...> | run | explain [command] | good | bad [note] | key | log [N] | privacy | doctor | update | uninstall
 # omarchy:examples=how to find largest files here | how explain "tar -xzvf a.tgz" | how run | how privacy | how doctor
@@ -9,8 +9,9 @@
 Privacy promise: the only data that leaves this machine is your question (or, for
 `how explain`, the command) plus your OS name and shell name, sent to one host
 (api.groq.com unless HOW_API_URL says otherwise), and only when you ask something.
-No telemetry, no background calls, no update checks. Nothing runs until you see it
-and press a key; the safety badge comes from local rules below, never from the model.
+No telemetry, no background calls, no update checks. Asking never runs anything: the
+command is shown and copied, and you are back at your own prompt. Only `how run` runs
+it, after a keypress; the safety badge comes from local rules below, never from the model.
 
 Python 3.9+, standard library only. `how privacy` prints the details.
 """
@@ -57,7 +58,7 @@ Reply EXACTLY in this format:
 ```bash
 <one command, or a short && chain>
 ```
-<one short line: what it does, max 12 words>
+<one or two short sentences: what it does>
 If the question is not a task, answer in one short sentence without a code block.
 If you are not sure or the tool does not exist, reply exactly: I don't know"""
 
@@ -253,7 +254,7 @@ def clipboard_tool() -> Optional[list[str]]:
 # ----------------------------------------------------------------------------- safety classifier
 # The badge is decided here, by fixed local rules, never by the model.
 # Order: any dangerous pattern wins; then any modifying pattern; then the command is "safe" only if
-# every segment of every pipeline / && / ; / subshell is a known read-only command. Unknown = modifies.
+# every segment of every pipeline / && / ; / subshell is a known read-only command. Unknown = unsafe.
 
 CMD_START = r"(?:^|[;&|(`]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?"
 SHELLS = r"(?:ba|z|da|k|fi)?sh|python3?|perl|ruby"
@@ -281,7 +282,7 @@ DANGEROUS_RULES = [
     (r">\s*/dev/(?:sd[a-z]|nvme\d|vd[a-z]|mmcblk\d)", "writes straight to a disk device"),
 ]
 
-MODIFIES_RULES = [
+UNSAFE_RULES = [
     (r"\b(?:rm|mv|cp|mkdir|rmdir|touch|ln|chmod|chown|chgrp|truncate|tee|rsync)\b",
      "creates, moves or changes files"),
     (r"\bsed\s+-[a-z]*i", "edits files in place"),
@@ -393,16 +394,16 @@ FIND_EXEC_END = "__how_find_exec_end__"
 
 
 def classify(command: str) -> tuple[str, str]:
-    """Returns (level, reason), level being "safe", "modifies" or "dangerous". Pure, local, no LLM."""
+    """Returns (level, reason), level being "safe", "unsafe" or "dangerous". Pure, local, no LLM."""
     cmd = (command or "").strip()
     # `<placeholder>` slots such as `lsof -p <PID>` are not redirections.
     low = re.sub(r"<[a-z0-9_.:@/-]+>", "x", cmd.lower())
-    for rules, level in ((DANGEROUS_RULES, "dangerous"), (MODIFIES_RULES, "modifies")):
+    for rules, level in ((DANGEROUS_RULES, "dangerous"), (UNSAFE_RULES, "unsafe")):
         for pattern, reason in rules:
             if re.search(pattern, low):
                 return level, reason
     if not cmd or not is_read_only(cmd):
-        return "modifies", "not a known read-only command, so treat it as changing something"
+        return "unsafe", "not a known read-only command, so treat it as changing something"
     return "safe", "reads only"
 
 
@@ -592,20 +593,52 @@ def explain_messages(command: str) -> list[dict]:
             {"role": "user", "content": command}]
 
 
-def chat(messages: list[dict]) -> str:
-    """One request to the OpenAI-compatible endpoint. Raises HowError with an actionable hint."""
+def clean(text: str) -> str:
+    """Drops terminal control characters from model output (keeps newlines and tabs)."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f\x9b]", "", text)
+
+
+def read_stream(response, on_text) -> str:
+    """Reads a server-sent-events reply, handing each piece of text to on_text as it arrives."""
+    parts = []
+    for raw in response:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            piece = json.loads(data)["choices"][0]["delta"].get("content") or ""
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            continue
+        piece = clean(piece)
+        if piece:
+            parts.append(piece)
+            on_text(piece)
+    return "".join(parts).strip()
+
+
+def chat(messages: list[dict], on_text=None) -> str:
+    """One request to the OpenAI-compatible endpoint. Raises HowError with an actionable hint.
+
+    With on_text, the reply is streamed and each piece of text is passed to on_text as it arrives."""
     key, _ = api_key()
     if not key:
         raise HowError("no_key", "no API key yet", f"run: how key   (free key at {KEYS_URL})")
     body: dict = {"model": model(), "messages": messages, "temperature": 0.1}
     if body["model"].startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
+    if on_text:
+        body["stream"] = True
     request = urllib.request.Request(api_url(), data=json.dumps(body).encode(), method="POST", headers={
         "Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": f"how/{__version__}"})
     debug(f"POST {api_url()} model={body['model']}")
     try:
         # The URL is the fixed https API_URL, or the user's own HOW_API_URL.
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # nosec B310
+            if on_text and "event-stream" in (response.headers.get("Content-Type") or ""):
+                return read_stream(response, on_text)
             data = json.load(response)
     except urllib.error.HTTPError as e:
         raise http_error(e) from None
@@ -619,9 +652,12 @@ def chat(messages: list[dict]) -> str:
     except ValueError:
         raise HowError("bad_response", "the API sent something that is not JSON", "try again") from None
     try:
-        return str(data["choices"][0]["message"]["content"] or "").strip()
+        text = clean(str(data["choices"][0]["message"]["content"] or "")).strip()
     except (KeyError, IndexError, TypeError):
         raise HowError("bad_response", "unexpected reply from the API", "try again, or run: how doctor") from None
+    if on_text and text:
+        on_text(text)
+    return text
 
 
 def http_error(e: urllib.error.HTTPError) -> HowError:
@@ -708,19 +744,25 @@ def load_last() -> dict:
 
 # ----------------------------------------------------------------------------- asking and running
 
-BADGES = {"safe": ("🟢", "green"), "modifies": ("🟡", "yellow"), "dangerous": ("🔴", "red")}
+BADGE_COLORS = {"safe": "green", "unsafe": "yellow", "dangerous": "red"}
 
 
 def badge(level: str, reason: str, stream=None) -> str:
-    icon, color = BADGES[level]
-    return paint(f"{icon} {level}", color, "bold", stream=stream) + paint(f" · {reason}", "dim", stream=stream)
+    """The level as a coloured word: safe (green), unsafe (yellow), dangerous (red)."""
+    return paint(level, BADGE_COLORS[level], "bold", stream=stream) + paint(f" · {reason}", "dim", stream=stream)
 
 
 def cmd_ask(question: str, opts: dict) -> int:
     started = time.monotonic()
+    live = interactive() and not opts["json"] and not opts["no_run"]
+    writer = LiveWriter() if live else None
     try:
-        with spinner("thinking"):
-            reply = chat(ask_messages(question))
+        if writer:
+            print(f"\n{paint('how ❯', 'bold', 'cyan')} {paint(f'(model: {model()})', 'dim')}\n")
+            reply = chat(ask_messages(question), on_text=writer.write)
+        else:
+            with spinner("thinking"):
+                reply = chat(ask_messages(question))
     except HowError as e:
         log_event("error", question=question, action=e.code, model=model())
         raise
@@ -734,10 +776,53 @@ def cmd_ask(question: str, opts: dict) -> int:
         return 2 if answer.unknown else 0
     if answer.unknown:
         raise HowError("dont_know", "I don't know.", "try rephrasing, or name the tool you mean", exit_code=2)
+    if writer:
+        writer.finish(reply)
+        return suggest(question, answer.command, opts) if answer.command else 0
     if not answer.command:
         print(answer.note)
         return 0
-    return offer(question, answer.command, answer.note, opts)
+    return offer(question, answer.command, answer.note, opts, ask=False)
+
+
+class LiveWriter:
+    """Prints the answer as it streams in. Holds back the first few characters so a bare
+    "I don't know" is never flashed on screen before it is reported as such."""
+
+    HOLD = 28
+
+    def __init__(self):
+        self.held, self.flushed = "", False
+
+    def write(self, piece: str) -> None:
+        if not self.flushed:
+            self.held += piece
+            if len(self.held) <= self.HOLD and "```" not in self.held:
+                return
+            piece, self.flushed = self.held, True
+        sys.stdout.write(piece)
+        sys.stdout.flush()
+
+    def finish(self, reply: str) -> None:
+        if not self.flushed:
+            sys.stdout.write(reply)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+def suggest(question: str, command: str, opts: dict) -> int:
+    """After the answer: the command with its badge, copied to the clipboard. Then back to the shell."""
+    level, reason = classify(command)
+    copied = copy_to_clipboard(command)
+    if copied:
+        log_event("copy", question=question, command=command, safety=level, action="copy")
+    clip = paint(" [copied to clipboard: paste Ctrl+Shift+V]", "green") if copied else ""
+    hints = paint(" • run: how run • dissect: how explain • rate: how good/bad", "dim")
+    print(f"{paint('Suggested command:', 'bold', 'cyan')} [{badge(level, reason)}]{clip}{hints}")
+    print("  " + paint(command, "bold", "green") + "\n")
+    if opts["yes"] and level == "safe":
+        return execute(question, command, level, "auto")
+    return 0
 
 
 def json_result(question: str, answer: Optional[Answer], level: Optional[str], reason: str,
@@ -751,8 +836,8 @@ def json_result(question: str, answer: Optional[Answer], level: Optional[str], r
             "version": __version__}
 
 
-def offer(question: str, command: str, note: str, opts: dict) -> int:
-    """Shows the command with its badge, then (on a terminal) waits for one keypress to run it."""
+def offer(question: str, command: str, note: str, opts: dict, ask: bool) -> int:
+    """Shows the command with its badge and copies it. Only `how run` (ask=True) waits for a keypress to run it."""
     level, reason = classify(command)
     if opts["no_run"] or not interactive():
         print(command)
@@ -767,20 +852,24 @@ def offer(question: str, command: str, note: str, opts: dict) -> int:
     if copied:
         extras.append("copied")
         log_event("copy", question=question, command=command, safety=level, action="copy")
+    elif not ask:
+        extras.append("not copied: no clipboard tool (install wl-clipboard); `how run` runs it")
     if extras:
         print(paint("  " + " · ".join(extras), "dim"))
     if opts["yes"] and level == "safe":
         return execute(question, command, level, "auto")
+    if not ask:
+        return 0
     return prompt_loop(question, command, level)
 
 
 PROMPTS = {
     "safe": "[Enter] run · [c] copy · [e] explain · [q] quit ",
-    "modifies": "[y] run · [c] copy · [e] explain · [q] quit ",
+    "unsafe": "[y] run · [c] copy · [e] explain · [q] quit ",
     "dangerous": "type run + Enter to run · c copy · e explain · Enter quits: ",
 }
 
-RUN_KEYS = {"safe": ("\n", "y"), "modifies": ("y",), "dangerous": ("run",)}
+RUN_KEYS = {"safe": ("\n", "y"), "unsafe": ("y",), "dangerous": ("run",)}
 
 
 def prompt_loop(question: str, command: str, level: str) -> int:
@@ -789,7 +878,7 @@ def prompt_loop(question: str, command: str, level: str) -> int:
         choice = ask_line(prompt).lower() if level == "dangerous" else read_key(prompt)
         if choice in RUN_KEYS[level]:
             return execute(question, command, level, "run")
-        if choice == "\n" and level == "modifies":
+        if choice == "\n" and level == "unsafe":
             print(paint("  this one changes something: press y to run it", "yellow"))
         elif choice == "c":
             print(paint("  copied" if copy_to_clipboard(command) else "  no clipboard tool (install wl-clipboard)", "dim"))
@@ -828,7 +917,7 @@ def cmd_run(opts: dict) -> int:
     last = load_last()
     if not last.get("command"):
         raise HowError("no_command", "the last answer had no command", "ask something first")
-    return offer(last["question"], last["command"], last.get("note", ""), opts)
+    return offer(last["question"], last["command"], last.get("note", ""), opts, ask=True)
 
 
 def explain_and_print(command: str) -> None:
@@ -932,7 +1021,8 @@ def format_log_line(line: str) -> str:
     except ValueError:
         return line
     when = str(e.get("ts", ""))[:19].replace("T", " ")
-    icon = BADGES[e["safety"]][0] if e.get("safety") in BADGES else " "
+    level = e.get("safety")
+    icon = paint(f"{level:<9}", BADGE_COLORS[level]) if level in BADGE_COLORS else " " * 9
     what = e.get("command") or e.get("question") or ""
     tail = " ".join(str(x) for x in (e.get("action"), f"exit {e['exit_code']}" if e.get("exit_code") else None) if x)
     return f"{paint(when, 'dim')}  {e.get('event', '?'):<6} {icon} {what}" + (paint(f"  [{tail}]", "dim") if tail else "")
@@ -1064,8 +1154,8 @@ def cmd_uninstall() -> int:
 
 HELP = """how: ask in plain words, get one terminal command with a safety badge
 
-  how <question>          e.g. how to find largest files here
-  how run                 run the last suggested command
+  how <question>          e.g. how to find largest files here (shown and copied; nothing runs)
+  how run                 run the last suggested command, after a keypress
   how explain [command]   break down the last (or given) command
   how good | how bad [note]   rate the last answer
   how key                 set your API key (free at console.groq.com/keys)
@@ -1076,12 +1166,13 @@ HELP = """how: ask in plain words, get one terminal command with a safety badge
   how --version | --help
 
 Flags before the question:
-  -y, --yes      run without asking, but only when the badge is 🟢 safe
-  -n, --no-run   just print (and copy) the command
+  -y, --yes      run without asking, but only when the badge is safe
+  -n, --no-run   print only the command (and copy it), no badge or note on stdout
   --json         print one JSON object; never prompts or runs
   --debug        diagnostics on stderr
 
-Badges: 🟢 safe (Enter runs) · 🟡 modifies (press y) · 🔴 dangerous (type run)"""
+Badges: safe · unsafe · dangerous
+`how run` asks first: Enter for safe, y for unsafe, the word run for dangerous."""
 
 FLAGS = {"-y": "yes", "--yes": "yes", "-n": "no_run", "--no-run": "no_run", "--json": "json", "--debug": "debug"}
 SINGLE_WORD = {"run", "key", "privacy", "doctor", "update", "uninstall", "version", "help"}
