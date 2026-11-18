@@ -37,12 +37,13 @@ jobs:
         run: |
           python3 tests/test_safety.py -v
 
-      - name: Verify Native Rust Transpilation & Installer Modes
+      - name: Verify Rust Transpiler (dev-only, not shipped) & Installer
         run: |
           python3 scripts/transpile_rust.py how -o /tmp/how-rs
           /tmp/how-rs --version
           /tmp/how-rs context dry-run
-          HOW_INSTALL_DIR=/tmp/how-inst-rs ./install.sh
-          /tmp/how-inst-rs/how --version
-          HOW_INSTALL_DIR=/tmp/how-inst-py ./install.sh --python-only
-          /tmp/how-inst-py/how --version
+          HOW_INSTALL_DIR=/tmp/how-inst ./install.sh
+          /tmp/how-inst/how --version
+          head -c 2 /tmp/how-inst/how | grep -q '#!'
+          HOW_INSTALL_DIR=/tmp/how-inst-compat ./install.sh --python-only
+          /tmp/how-inst-compat/how --version

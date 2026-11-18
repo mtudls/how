@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # how installer - fast, minimalist installation script
-# https://github.com/mdsyseng/how
+# https://github.com/mtudls/how
 #
 
 set -euo pipefail
@@ -56,34 +56,33 @@ BIN_DIR="${HOW_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$BIN_DIR"
 TARGET="$BIN_DIR/how"
 
-# 3. Source detection: local repo (with automatic Python -> Rust transpilation) or GitHub download
-REPO_RAW_URL="https://raw.githubusercontent.com/mdsyseng/how/main/how"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
-PYTHON_ONLY="${HOW_PYTHON_ONLY:-0}"
+# 3. Source detection: local repo checkout (copy ./how) or download from a tagged GitHub release
+HOW_VERSION="${HOW_VERSION:-v0.6.6}"
+REPO_RAW_URL="https://raw.githubusercontent.com/mtudls/how/${HOW_VERSION}/how"
+# When piped (`curl ... | bash`) there is no script file, so never treat the cwd as a checkout.
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+fi
+# `--python-only` / HOW_PYTHON_ONLY are accepted for backward compatibility and ignored:
+# the installer always installs the plain Python script.
 for arg in "$@"; do
-  if [ "$arg" = "--python-only" ]; then
-    PYTHON_ONLY="1"
-  fi
+  case "$arg" in
+    --python-only) ;;
+    *) warn "Ignoring unknown argument: $arg" ;;
+  esac
 done
 
-RUST_TRANSPILED=0
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/how" ]; then
-  if [ "$PYTHON_ONLY" != "1" ] && [ -f "$SCRIPT_DIR/scripts/transpile_rust.py" ] && (command -v rustc >/dev/null 2>&1 || [ -x "$HOME/.cargo/bin/rustc" ]); then
-    if python3 "$SCRIPT_DIR/scripts/transpile_rust.py" "$SCRIPT_DIR/how" -o "$TARGET.tmp"; then
-      RUST_TRANSPILED=1
-    else
-      warn "Rust transpilation failed, falling back to Python script installation."
-    fi
-  fi
-  if [ "$RUST_TRANSPILED" = "0" ] && [ "$SCRIPT_DIR/how" != "$TARGET" ]; then
+  if [ "$SCRIPT_DIR/how" != "$TARGET" ]; then
     cp "$SCRIPT_DIR/how" "$TARGET.tmp"
   fi
 else
   # Remote download via curl or wget
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$REPO_RAW_URL" -o "$TARGET.tmp" || abort "Failed to download how from GitHub ($REPO_RAW_URL)"
+    curl -fsSL "$REPO_RAW_URL" -o "$TARGET.tmp" || { rm -f "$TARGET.tmp"; abort "Failed to download how ${HOW_VERSION} from GitHub ($REPO_RAW_URL)"; }
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$TARGET.tmp" "$REPO_RAW_URL" || abort "Failed to download how from GitHub ($REPO_RAW_URL)"
+    wget -qO "$TARGET.tmp" "$REPO_RAW_URL" || { rm -f "$TARGET.tmp"; abort "Failed to download how ${HOW_VERSION} from GitHub ($REPO_RAW_URL)"; }
   else
     abort "Neither curl nor wget found to download how."
   fi
@@ -92,7 +91,7 @@ fi
 if [ -f "$TARGET.tmp" ]; then
   if [ ! -s "$TARGET.tmp" ]; then
     rm -f "$TARGET.tmp"
-    abort "Installed binary file is empty."
+    abort "Installed file is empty."
   fi
   chmod +x "$TARGET.tmp"
   if [ -L "$TARGET" ]; then
@@ -112,11 +111,7 @@ if [ -L "$BIN_DIR/om" ] && [ "$(readlink "$BIN_DIR/om" 2>/dev/null)" = "$TARGET"
   rm -f "$BIN_DIR/om"
 fi
 
-if [ "$RUST_TRANSPILED" = "1" ]; then
-  success "Installed how (native Rust transpiled binary) to $TARGET (Python source kept readable at $SCRIPT_DIR/how)"
-else
-  success "Installed how to $TARGET"
-fi
+success "Installed how to $TARGET"
 
 # 5. Check PATH
 case ":$PATH:" in
@@ -137,7 +132,7 @@ case ":$PATH:" in
       info "  fish_add_path $BIN_DIR"
     else
       info "Add it to $RC_FILE:"
-      info "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+      info "  export PATH=\"$BIN_DIR:\$PATH\""
     fi
     info "Then reload your shell: exec \$SHELL"
     ;;

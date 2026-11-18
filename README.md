@@ -17,14 +17,14 @@ Built for **Omarchy**, **Linux**, and your local project stack.
 
 ```bash
 # Option A — Install via Omarchy Plugin CLI (console-only, zero bar icons):
-omarchy plugin add https://github.com/mdsyseng/how.git --enable
+omarchy plugin add https://github.com/mtudls/how.git --enable
 
 # Option B — Install as an Arch / Omarchy Package (makepkg / pacman):
-git clone https://github.com/mdsyseng/how.git && cd how && makepkg -si
+git clone https://github.com/mtudls/how.git && cd how && makepkg -si
 
 # Option C — Direct CLI install:
-git clone https://github.com/mdsyseng/how.git && cd how
-./install.sh                    # Installs native Rust `how` — works immediately with 0 setup!
+git clone https://github.com/mtudls/how.git && cd how
+./install.sh                    # Installs `how` (a single Python script) to ~/.local/bin — works immediately with 0 setup!
 eval "$(how shell-init bash)"   # Optional: bind Alt+H to replace `# query` in-place in your shell prompt
 how auth login                  # Optional: add free Groq LPU key ($0, no card): console.groq.com/keys
 ```
@@ -88,7 +88,7 @@ how bash-history [on|off]         # Append suggestions to ~/.bash_history
 
 # Build, JSON & self-test
 how --json <query>                # Emit stateless deterministic JSON for AI agents (AX)
-how build                         # Rebuild native Rust binary from Python source
+how build                         # Experimental, dev-only: replaces installed `how` with a Rust build (needs checkout + rustc)
 how test [--stats]                # Run self-test and speed benchmark
 ```
 
@@ -103,16 +103,14 @@ how test [--stats]                # Run self-test and speed benchmark
 
 ## Core Capabilities (`[LIVE • v0.5]`)
 
-### ✅ 1. Instant Startup (`~1 ms`) with Readable Code
+### ✅ 1. Fast Startup with Readable Code
 **Effect:** Starts the moment you press Enter, while keeping the source code a single, readable Python file anyone can edit.
 
 <details>
-<summary><b>▸ Way / Form: Deterministic Python AST → Rust transpilation</b></summary>
+<summary><b>▸ Way / Form: Single-file Python (optional experimental Rust transpiler)</b></summary>
 
-- Source of truth: [`how`](how) (zero-dependency Python standard library).
-- During `./install.sh` or `how build`, [`scripts/transpile_rust.py`](scripts/transpile_rust.py) parses the Python AST and compiles a native Rust binary (`rustc -C opt-level=3 -C strip=symbols`) with **zero LLM calls** and **zero external crates**.
-- Common paths (`--help`, `--version`, `context dry-run`, `--dry-run`) execute in native Rust (`~1 ms`); stateful network/SQLite flows delegate to the embedded Python source.
-- Use `./install.sh --python-only` to skip Rust compilation.
+- Source of truth: [`how`](how) (zero-dependency Python standard library). `./install.sh`, the PKGBUILD and GitHub releases all install this script as-is.
+- Experimental, dev-only: [`scripts/transpile_rust.py`](scripts/transpile_rust.py) parses the Python AST and compiles a native Rust binary (`rustc -C opt-level=3 -C strip=symbols`) with **zero LLM calls** and **zero external crates**; fast paths (`--help`, `--version`, `context dry-run`) run in native Rust (`~1 ms`) and everything else delegates to the embedded Python source. It is used in CI checks but is not installed or shipped.
 
 </details>
 
@@ -161,7 +159,7 @@ how test [--stats]                # Run self-test and speed benchmark
 <summary><b>▸ Way / Form: 5-axis V&V scorecard & Free-Plan CI pipelines</b></summary>
 
 - Run `how test --stats`, `python3 tests/test_vv_suite.py`, or `python3 tests/test_safety.py -v`.
-- CI workflows (`.github/workflows/*.yml`) use `concurrency` (`cancel-in-progress: true`), `timeout-minutes: 5`, and single-VM consolidation to run V&V, `ruff`, `flake8`, `shellcheck`, `bandit`, `gitleaks`, and native `how-linux-x86_64` release builds.
+- CI workflows (`.github/workflows/*.yml`) use `concurrency` (`cancel-in-progress: true`), `timeout-minutes: 5`, and single-VM consolidation to run V&V, `ruff`, `flake8`, `shellcheck`, `bandit`, `gitleaks`, and tagged GitHub releases of the `how` script.
 - See [`docs/ASI.md`](docs/ASI.md) and [`docs/requirements.md`](docs/requirements.md) for historical details.
 
 </details>

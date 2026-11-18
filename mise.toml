@@ -2,8 +2,8 @@
 #
 #   mise tasks                  list everything below
 #   mise run test               run all tests
-#   mise run build              build the native binary ./how-bin
-#   mise run install            install `how` on this machine
+#   mise run build              dev-only: build the experimental Rust binary ./how-bin (not installed or shipped)
+#   mise run install            install `how` (the Python script) on this machine
 #   mise run release 0.6.6      bump version, test, commit, tag, push (CI publishes the release)
 
 [tasks.test]
@@ -11,7 +11,7 @@ description = "Run all tests"
 run = "python3 -m unittest discover -s tests"
 
 [tasks.build]
-description = "Build the native binary ./how-bin"
+description = "Dev-only: build the experimental Rust binary ./how-bin (install/package/release ship the Python script)"
 run = "python3 scripts/transpile_rust.py how -o how-bin && ./how-bin --version"
 
 [tasks.install]
