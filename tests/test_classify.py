@@ -1,4 +1,4 @@
-"""The safety badge: a pure, local function. Unknown means "unsafe"; the LLM never decides."""
+"""The safety badge: a pure, local function. Unknown means "changes"; the LLM never decides."""
 
 import unittest
 
@@ -17,8 +17,8 @@ class TestClassify(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(level(command), expected)
 
-    def test_unknown_commands_default_to_unsafe(self):
-        self.assertLevel("unsafe", [
+    def test_unknown_commands_default_to_changes(self):
+        self.assertLevel("changes", [
             "frobnicate --all", "./deploy.sh", "make install", "python3 script.py", "kill 1234",
             "tar -xzvf archive.tar.gz", "ssh user@host", "pacman -Sc", "", "yay",
         ])
@@ -60,7 +60,7 @@ class TestClassify(unittest.TestCase):
                                        "ls | xargs rm -rf"])
 
     def test_writes_redirections_and_compounds_are_not_safe(self):
-        self.assertLevel("unsafe", [
+        self.assertLevel("changes", [
             "ls > files.txt", "echo hi >> log.txt", "cat a 2> err.txt", "ls &> out.txt", "ls; touch x",
             "ls && mkdir x", "ls | xargs touch", "git status && ./build.sh", "sort -o out.txt in.txt",
             "git branch feature", "sed -i 's/a/b/' f", "sed -e s/a/b/ -i f", "sudo pacman -S vim",
@@ -78,7 +78,7 @@ class TestClassify(unittest.TestCase):
         self.assertIn("shell", reason)
 
     def test_unparseable_is_not_safe(self):
-        self.assertEqual(level("echo 'unterminated"), "unsafe")
+        self.assertEqual(level("echo 'unterminated"), "changes")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ Kept from earlier versions because they still hold:
 1. **What you see is what runs.** The displayed command is the executed command, byte for byte.
 2. **The model proposes; local rules judge.** The badge is computed by a pure function on the machine.
    The model's output never influences the level.
-3. **Unknown means careful.** Anything the rules do not recognise is unsafe and needs an explicit `y`.
+3. **Unknown means careful.** Anything the rules do not recognise is `changes` and needs an explicit `y`.
 4. **One request, one host, stated up front.** Each question sends the question text, OS pretty name,
    shell name and an Omarchy marker (plus the API key and model name) to one host (`api.groq.com` unless
    `HOW_API_URL` says otherwise). `how explain` sends the command instead; `how doctor` checks the same host.
@@ -71,7 +71,7 @@ distilled from the 0.6.6 `classify_command_safety` and its read-only allowlists,
 | Level | Rule |
 |---|---|
 | safe | Every segment (split on pipes, `&&`, `\|\|`, `;` and subshells) is a known read-only command, with no output written to a file (other than `/dev/null`) |
-| unsafe | Everything else that is not dangerous, including every command the rules do not know |
+| changes | Everything else that is not dangerous, including every command the rules do not know |
 | dangerous | Matches a known destructive pattern |
 
 Dangerous patterns include: recursive forced removal (`rm -rf` and variants), `mkfs`, `wipefs`, `fdisk`,
@@ -81,9 +81,9 @@ into a shell (`curl … | sh`, `… | sudo bash`, `bash <(curl …)`, `sh -c "$(
 
 Some tools are read-only only with certain subcommands or flags (for example `git status` versus
 `git stash drop`, or `find . -name x` versus `find . -delete`, which is dangerous). The allowlist names those
-forms explicitly. A command that cannot be parsed (for example, unbalanced quotes) is unsafe, never safe.
+forms explicitly. A command that cannot be parsed (for example, unbalanced quotes) is `changes`, never safe.
 
-Confirmation follows the level: Enter runs safe, `y` runs unsafe (Enter does not), and dangerous requires typing
+Confirmation follows the level: Enter runs safe, `y` runs `changes` (Enter does not), and dangerous requires typing
 `run` after the reason is shown. `-y/--yes` auto-runs only safe.
 
 ### Limits, stated plainly
@@ -96,11 +96,11 @@ A rule-based badge is a seatbelt, not a guarantee.
 - **Allowlists age.** A tool that was read-only can gain a writing flag in a new release. The allowlist
   must be kept conservative and tested.
 - **Shell syntax is large.** Quoting, expansion, here-documents and nested substitutions can hide
-  structure from a lexer. When parsing is uncertain the classifier must fall back to unsafe or dangerous, never safe.
-- **The default is the safety net.** Because unknown commands are unsafe, a gap in the rules usually costs
+  structure from a lexer. When parsing is uncertain the classifier must fall back to `changes` or dangerous, never safe.
+- **The default is the safety net.** Because unknown commands are `changes`, a gap in the rules usually costs
   an extra keypress, not a silent run. The failure that matters is a harmful command shown as safe;
   that is treated as a security bug (see [SECURITY.md](../SECURITY.md)).
-- **dangerous is not exhaustive.** A destructive command that matches no pattern is still unsafe and still needs `y`,
+- **dangerous is not exhaustive.** A destructive command that matches no pattern is still `changes` and still needs `y`,
   but it will not carry the stronger warning.
 
 The badge helps the user read the command. It does not replace reading it.

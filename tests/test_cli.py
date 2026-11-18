@@ -27,7 +27,7 @@ class TestPipedOutput(HowTestCase):
         self.assertEqual(p.returncode, 0)
         self.assertFalse((self.tmp / "ran").exists())
         self.assertFalse(self.clipboard.exists())
-        self.assertIn("unsafe", p.stderr)
+        self.assertIn("changes", p.stderr)
 
     def test_no_run_flag_copies(self):
         self.with_api().answer("```bash\nls -la\n```\nLists.")
