@@ -16,9 +16,11 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 
 ### Added
 
-- Asking serves the answer the way 0.6.x did: a `how ❯` header, the answer streamed as it arrives, then
-  `Suggested command:` with the badge and the command, copied to the clipboard. It returns to your shell
-  prompt and never runs anything.
+- Asking prints two quiet lines as the reply streams in: the command, then its badge and a short note.
+  The command is copied to the clipboard the moment it is complete. It returns to your shell prompt and
+  never runs anything. No spinner, no header.
+- The clipboard tool is no longer waited on: `wl-copy` stays in the background, which used to stall every
+  answer for up to three seconds.
 - Terminal control characters in model output are dropped before printing.
 - `how run` runs the last command after a prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
 - Confirmation by badge: Enter runs safe, unsafe needs `y`, dangerous needs the word `run` and shows the reason.

@@ -18,10 +18,8 @@ Python 3.9+, standard library only. `how privacy` prints the details.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import getpass
-import itertools
 import json
 import os
 import re
@@ -31,7 +29,6 @@ import signal
 import socket
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -166,32 +163,6 @@ def interactive() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-@contextlib.contextmanager
-def spinner(label: str):
-    """A small spinner on stderr while waiting for the network; silent when stderr is not a terminal."""
-    if not sys.stderr.isatty():
-        yield
-        return
-    stop = threading.Event()
-
-    def spin():
-        for frame in itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"):
-            sys.stderr.write(f"\r{paint(frame + ' ' + label, 'dim', stream=sys.stderr)}")
-            sys.stderr.flush()
-            if stop.wait(0.08):
-                break
-        sys.stderr.write("\r\033[K")
-        sys.stderr.flush()
-
-    thread = threading.Thread(target=spin, daemon=True)
-    thread.start()
-    try:
-        yield
-    finally:
-        stop.set()
-        thread.join()
-
-
 def read_key(prompt: str) -> str:
     """Reads one keypress (no Enter needed). Falls back to a line of input when raw mode is unavailable.
 
@@ -238,7 +209,10 @@ def copy_to_clipboard(text: str) -> bool:
     if not tool:
         return False
     try:
-        return subprocess.run(tool, input=text.encode(), capture_output=True, timeout=3).returncode == 0
+        # wl-copy stays in the background holding the selection: with captured output we would wait
+        # on its pipes until the timeout, so its output goes to /dev/null and only stdin is a pipe.
+        return subprocess.run(tool, input=text.encode(), stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=3).returncode == 0
     except (OSError, subprocess.SubprocessError) as e:
         debug(f"clipboard failed: {e}")
         return False
@@ -755,14 +729,9 @@ def badge(level: str, reason: str, stream=None) -> str:
 def cmd_ask(question: str, opts: dict) -> int:
     started = time.monotonic()
     live = interactive() and not opts["json"] and not opts["no_run"]
-    writer = LiveWriter() if live else None
+    writer = LiveWriter(question) if live else None
     try:
-        if writer:
-            print(f"\n{paint('how ❯', 'bold', 'cyan')} {paint(f'(model: {model()})', 'dim')}\n")
-            reply = chat(ask_messages(question), on_text=writer.write)
-        else:
-            with spinner("thinking"):
-                reply = chat(ask_messages(question))
+        reply = chat(ask_messages(question), on_text=writer.write if writer else None)
     except HowError as e:
         log_event("error", question=question, action=e.code, model=model())
         raise
@@ -777,8 +746,10 @@ def cmd_ask(question: str, opts: dict) -> int:
     if answer.unknown:
         raise HowError("dont_know", "I don't know.", "try rephrasing, or name the tool you mean", exit_code=2)
     if writer:
-        writer.finish(reply)
-        return suggest(question, answer.command, opts) if answer.command else 0
+        writer.finish(answer)
+        if answer.command and opts["yes"] and level == "safe":
+            return execute(question, answer.command, level, "auto")
+        return 0
     if not answer.command:
         print(answer.note)
         return 0
@@ -786,43 +757,58 @@ def cmd_ask(question: str, opts: dict) -> int:
 
 
 class LiveWriter:
-    """Prints the answer as it streams in. Holds back the first few characters so a bare
-    "I don't know" is never flashed on screen before it is reported as such."""
+    """Two quiet lines, shown as the reply streams in: the command (copied to the clipboard the
+    moment it is complete), then its badge and the note. Nothing else, and nothing before the
+    command is known, so a bare "I don't know" is never flashed as an answer."""
 
-    HOLD = 28
+    BLOCK = re.compile(r"```[\w+-]*[ \t]*\n(.*?)```", re.S)
 
-    def __init__(self):
-        self.held, self.flushed = "", False
+    def __init__(self, question: str):
+        self.question, self.text, self.command, self.shown = question, "", None, 0
 
     def write(self, piece: str) -> None:
-        if not self.flushed:
-            self.held += piece
-            if len(self.held) <= self.HOLD and "```" not in self.held:
+        self.text += piece
+        if self.command is None:
+            block = self.BLOCK.search(self.text)
+            if not block:
                 return
-            piece, self.flushed = self.held, True
-        sys.stdout.write(piece)
+            self.command = join_lines(block.group(1)) or ""
+            self.shown = block.end()
+            self.show_command()
+        self.show_note()
+
+    def show_command(self) -> None:
+        if not self.command:
+            return
+        level, reason = classify(self.command)
+        print("  " + paint(self.command, "bold"))
+        label = paint(level, BADGE_COLORS[level], "bold")
+        if level != "safe":
+            label += paint(f" ({reason})", "dim")
+        if copy_to_clipboard(self.command):
+            log_event("copy", question=self.question, command=self.command, safety=level, action="copy")
+        else:
+            label += paint(" · not copied (install wl-clipboard)", "dim")
+        sys.stdout.write("  " + label)
         sys.stdout.flush()
 
-    def finish(self, reply: str) -> None:
-        if not self.flushed:
-            sys.stdout.write(reply)
-        sys.stdout.write("\n")
+    def show_note(self) -> None:
+        rest = " ".join(self.text[self.shown:].split("\n"))
+        if self.shown == self.BLOCK.search(self.text).end():
+            rest = rest.lstrip()
+            if not rest:
+                return
+            rest = " · " + rest
+        self.shown = len(self.text)
+        sys.stdout.write(paint(rest, "dim"))
         sys.stdout.flush()
 
-
-def suggest(question: str, command: str, opts: dict) -> int:
-    """After the answer: the command with its badge, copied to the clipboard. Then back to the shell."""
-    level, reason = classify(command)
-    copied = copy_to_clipboard(command)
-    if copied:
-        log_event("copy", question=question, command=command, safety=level, action="copy")
-    clip = paint(" [copied to clipboard: paste Ctrl+Shift+V]", "green") if copied else ""
-    hints = paint(" • run: how run • dissect: how explain • rate: how good/bad", "dim")
-    print(f"{paint('Suggested command:', 'bold', 'cyan')} [{badge(level, reason)}]{clip}{hints}")
-    print("  " + paint(command, "bold", "green") + "\n")
-    if opts["yes"] and level == "safe":
-        return execute(question, command, level, "auto")
-    return 0
+    def finish(self, answer: Answer) -> None:
+        if self.command is None:  # no command in the reply: a plain one-sentence answer
+            print(answer.note)
+        else:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 
 def json_result(question: str, answer: Optional[Answer], level: Optional[str], reason: str,
@@ -921,8 +907,7 @@ def cmd_run(opts: dict) -> int:
 
 
 def explain_and_print(command: str) -> None:
-    with spinner("explaining"):
-        text = chat(explain_messages(command))
+    text = chat(explain_messages(command))
     for line in text.splitlines():
         print(paint("  " + line, "dim") if line.strip() else "")
 
