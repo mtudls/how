@@ -120,9 +120,9 @@ case ":$PATH:" in
   *)
     CURRENT_SHELL="$(basename "${SHELL:-bash}")"
     case "$CURRENT_SHELL" in
-      zsh)  RC_FILE="~/.zshrc" ;;
-      fish) RC_FILE="~/.config/fish/config.fish" ;;
-      *)    RC_FILE="~/.bashrc" ;;
+      zsh)  RC_FILE="$HOME/.zshrc" ;;
+      fish) RC_FILE="$HOME/.config/fish/config.fish" ;;
+      *)    RC_FILE="$HOME/.bashrc" ;;
     esac
 
     echo

@@ -117,7 +117,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
 
-
 def strip_control_sequences(text: str) -> str:
     """
     Strips ANSI / terminal control escape sequences and C0 control characters
@@ -639,7 +638,7 @@ def run_step_by_step_context_approval(cfg=None, cwd=None, dry_run_only=False, in
             ans = "y"
 
         if ans in ("off", "q", "quit", "0"):
-            for rem in steps[idx - 1 :]:
+            for rem in steps[idx - 1:]:
                 approved_steps[rem["id"]] = False
             mode = "off"
             print(f"    {YELLOW}✗ Context discovery disabled.{RESET}\n")
@@ -1020,7 +1019,7 @@ def triage_query_with_groq(query: str, env_context: str = "", api_key: str = Non
                 start = content.find("{")
                 end = content.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    parsed = json.loads(content[start : end + 1])
+                    parsed = json.loads(content[start:end + 1])
                     route = str(parsed.get("route", "fast")).lower()
                     if route in ("fast", "deep"):
                         return {
@@ -3148,13 +3147,13 @@ def _segment_is_read_only(tokens: list) -> bool:
         return any(a in inspect_words for a in low_args)
 
     allowed = _READ_ONLY_SUBCOMMANDS[binary]
-    pos = [a for a in args if not a.startswith("-") or a in ("--version", "-V", "-v", "--failed", "-t", "-q", "-qa",
-                                                                 "-qi", "-ql", "-qf", "-qc", "-qd", "--query", "--list",
-                                                                 "-l", "-L", "-s", "-S", "-p", "-c", "-I", "-j",
-                                                                 "--state", "--list-all", "--get-active-zones",
-                                                                 "--list-services", "--list-ports", "--listfiles",
-                                                                 "--status", "--search", "--print-architecture",
-                                                                 "--get-selections", "--contents", "--info", "--verify")]
+    inspect_flags = (
+        "--version", "-V", "-v", "--failed", "-t", "-q", "-qa", "-qi", "-ql", "-qf", "-qc", "-qd", "--query", "--list",
+        "-l", "-L", "-s", "-S", "-p", "-c", "-I", "-j", "--state", "--list-all", "--get-active-zones",
+        "--list-services", "--list-ports", "--listfiles", "--status", "--search", "--print-architecture",
+        "--get-selections", "--contents", "--info", "--verify",
+    )
+    pos = [a for a in args if not a.startswith("-") or a in inspect_flags]
     if binary == "git":
         # Skip global options like `git -C dir` / `git --no-pager`.
         rest = list(args)
@@ -3382,8 +3381,8 @@ def split_shell_pipeline(command: str) -> list[tuple[str, str]]:
             elif ch == ")" and paren_depth > 0:
                 paren_depth -= 1
             elif paren_depth == 0:
-                if command[i : i + 2] in ("&&", "||"):
-                    op = command[i : i + 2]
+                if command[i:i + 2] in ("&&", "||"):
+                    op = command[i:i + 2]
                     seg = "".join(buf).strip()
                     if seg:
                         stages.append((seg, op))
