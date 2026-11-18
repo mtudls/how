@@ -118,7 +118,7 @@ class TestInteractive(HowTestCase):
         self.assertEqual(self.log_entries()[-1]["event"], "run")
         self.assertEqual(self.log_entries()[-1]["exit_code"], 0)
 
-    def test_run_modifies_ignores_enter_and_runs_on_y(self):
+    def test_run_unsafe_ignores_enter_and_runs_on_y(self):
         target = self.tmp / "made"
         self.ask_then_run("to", "make", "a", "file", answer=f"```bash\ntouch {target}\n```\nCreates a file.")
         self.expect(r"\[y\] run")

@@ -17,7 +17,7 @@ class TestClassify(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(level(command), expected)
 
-    def test_unknown_commands_default_to_modifies(self):
+    def test_unknown_commands_default_to_unsafe(self):
         self.assertLevel("unsafe", [
             "frobnicate --all", "./deploy.sh", "make install", "python3 script.py", "kill 1234",
             "tar -xzvf archive.tar.gz", "ssh user@host", "pacman -Sc", "", "yay",
