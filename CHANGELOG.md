@@ -16,7 +16,10 @@ safety badge, copied to your clipboard. See [docs/DESIGN.md](docs/DESIGN.md) for
 
 ### Added
 
-- Asking shows the command with its badge, copies it and returns to your shell prompt; it never runs anything.
+- Asking serves the answer the way 0.6.x did: a `how ❯` header, the answer streamed as it arrives, then
+  `Suggested command:` with the badge and the command, copied to the clipboard. It returns to your shell
+  prompt and never runs anything.
+- Terminal control characters in model output are dropped before printing.
 - `how run` runs the last command after a prompt: `[Enter] run · [c] copy · [e] explain · [q] quit`.
 - Confirmation by badge: Enter runs 🟢, 🟡 needs `y`, 🔴 needs the word `run` and shows the reason.
 - `how key` to store the API key (hidden input, file mode 0600).

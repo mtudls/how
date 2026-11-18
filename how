@@ -58,7 +58,7 @@ Reply EXACTLY in this format:
 ```bash
 <one command, or a short && chain>
 ```
-<one short line: what it does, max 12 words>
+<one or two short sentences: what it does>
 If the question is not a task, answer in one short sentence without a code block.
 If you are not sure or the tool does not exist, reply exactly: I don't know"""
 
@@ -593,20 +593,52 @@ def explain_messages(command: str) -> list[dict]:
             {"role": "user", "content": command}]
 
 
-def chat(messages: list[dict]) -> str:
-    """One request to the OpenAI-compatible endpoint. Raises HowError with an actionable hint."""
+def clean(text: str) -> str:
+    """Drops terminal control characters from model output (keeps newlines and tabs)."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f\x9b]", "", text)
+
+
+def read_stream(response, on_text) -> str:
+    """Reads a server-sent-events reply, handing each piece of text to on_text as it arrives."""
+    parts = []
+    for raw in response:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            piece = json.loads(data)["choices"][0]["delta"].get("content") or ""
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            continue
+        piece = clean(piece)
+        if piece:
+            parts.append(piece)
+            on_text(piece)
+    return "".join(parts).strip()
+
+
+def chat(messages: list[dict], on_text=None) -> str:
+    """One request to the OpenAI-compatible endpoint. Raises HowError with an actionable hint.
+
+    With on_text, the reply is streamed and each piece of text is passed to on_text as it arrives."""
     key, _ = api_key()
     if not key:
         raise HowError("no_key", "no API key yet", f"run: how key   (free key at {KEYS_URL})")
     body: dict = {"model": model(), "messages": messages, "temperature": 0.1}
     if body["model"].startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
+    if on_text:
+        body["stream"] = True
     request = urllib.request.Request(api_url(), data=json.dumps(body).encode(), method="POST", headers={
         "Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": f"how/{__version__}"})
     debug(f"POST {api_url()} model={body['model']}")
     try:
         # The URL is the fixed https API_URL, or the user's own HOW_API_URL.
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:  # nosec B310
+            if on_text and "event-stream" in (response.headers.get("Content-Type") or ""):
+                return read_stream(response, on_text)
             data = json.load(response)
     except urllib.error.HTTPError as e:
         raise http_error(e) from None
@@ -620,9 +652,12 @@ def chat(messages: list[dict]) -> str:
     except ValueError:
         raise HowError("bad_response", "the API sent something that is not JSON", "try again") from None
     try:
-        return str(data["choices"][0]["message"]["content"] or "").strip()
+        text = clean(str(data["choices"][0]["message"]["content"] or "")).strip()
     except (KeyError, IndexError, TypeError):
         raise HowError("bad_response", "unexpected reply from the API", "try again, or run: how doctor") from None
+    if on_text and text:
+        on_text(text)
+    return text
 
 
 def http_error(e: urllib.error.HTTPError) -> HowError:
@@ -719,9 +754,15 @@ def badge(level: str, reason: str, stream=None) -> str:
 
 def cmd_ask(question: str, opts: dict) -> int:
     started = time.monotonic()
+    live = interactive() and not opts["json"] and not opts["no_run"]
+    writer = LiveWriter() if live else None
     try:
-        with spinner("thinking"):
-            reply = chat(ask_messages(question))
+        if writer:
+            print(f"\n{paint('how ❯', 'bold', 'cyan')} {paint(f'(model: {model()})', 'dim')}\n")
+            reply = chat(ask_messages(question), on_text=writer.write)
+        else:
+            with spinner("thinking"):
+                reply = chat(ask_messages(question))
     except HowError as e:
         log_event("error", question=question, action=e.code, model=model())
         raise
@@ -735,10 +776,53 @@ def cmd_ask(question: str, opts: dict) -> int:
         return 2 if answer.unknown else 0
     if answer.unknown:
         raise HowError("dont_know", "I don't know.", "try rephrasing, or name the tool you mean", exit_code=2)
+    if writer:
+        writer.finish(reply)
+        return suggest(question, answer.command, opts) if answer.command else 0
     if not answer.command:
         print(answer.note)
         return 0
     return offer(question, answer.command, answer.note, opts, ask=False)
+
+
+class LiveWriter:
+    """Prints the answer as it streams in. Holds back the first few characters so a bare
+    "I don't know" is never flashed on screen before it is reported as such."""
+
+    HOLD = 28
+
+    def __init__(self):
+        self.held, self.flushed = "", False
+
+    def write(self, piece: str) -> None:
+        if not self.flushed:
+            self.held += piece
+            if len(self.held) <= self.HOLD and "```" not in self.held:
+                return
+            piece, self.flushed = self.held, True
+        sys.stdout.write(piece)
+        sys.stdout.flush()
+
+    def finish(self, reply: str) -> None:
+        if not self.flushed:
+            sys.stdout.write(reply)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+def suggest(question: str, command: str, opts: dict) -> int:
+    """After the answer: the command with its badge, copied to the clipboard. Then back to the shell."""
+    level, reason = classify(command)
+    copied = copy_to_clipboard(command)
+    if copied:
+        log_event("copy", question=question, command=command, safety=level, action="copy")
+    clip = paint(" [copied to clipboard: paste Ctrl+Shift+V]", "green") if copied else ""
+    hints = paint(" • run: how run • dissect: how explain • rate: how good/bad", "dim")
+    print(f"{paint('Suggested command:', 'bold', 'cyan')} [{badge(level, reason)}]{clip}{hints}")
+    print("  " + paint(command, "bold", "green") + "\n")
+    if opts["yes"] and level == "safe":
+        return execute(question, command, level, "auto")
+    return 0
 
 
 def json_result(question: str, answer: Optional[Answer], level: Optional[str], reason: str,

@@ -64,6 +64,11 @@ class FakeAPI:
     def answer(self, content, status=200, headers=None):
         self.responses.append((status, reply(content) if status == 200 else {"error": "x"}, headers or {}))
 
+    def stream(self, *pieces):
+        """Queues a server-sent-events reply made of these text pieces."""
+        events = "".join("data: " + json.dumps({"choices": [{"delta": {"content": piece}}]}) + "\n\n" for piece in pieces)
+        self.responses.append((200, (events + "data: [DONE]\n\n").encode(), {"Content-Type": "text/event-stream"}))
+
     def close(self):
         self.server.shutdown()
         self.server.server_close()

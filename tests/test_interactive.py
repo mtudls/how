@@ -16,10 +16,13 @@ LAUNCHER = "import os,sys; os.close(os.open(os.ttyname(0), os.O_RDWR)); os.execv
 
 @unittest.skipUnless(sys.platform.startswith(("linux", "darwin")), "needs a pty")
 class TestInteractive(HowTestCase):
-    def spawn(self, *args, answer=None, then=()):
+    def spawn(self, *args, answer=None, then=(), stream=None):
         api = self.with_api()
+        if stream:
+            api.stream(*stream)
         for content in ([answer] if answer else []) + list(then):
             api.answer(content)
+        self.api = api
         master, slave = os.openpty()
         self.proc = subprocess.Popen([sys.executable, "-c", LAUNCHER, sys.executable, str(HOW), *args],
                                      stdin=slave, stdout=slave, stderr=slave, env={**self.env, "TERM": "xterm"},
@@ -80,6 +83,29 @@ class TestInteractive(HowTestCase):
         self.assertFalse(target.exists())
         self.assertEqual(self.clipboard.read_text(), f"touch {target}")
         self.assertEqual([e["event"] for e in self.log_entries()], ["answer", "copy"])
+
+    def test_answer_is_streamed_under_the_how_header_then_suggested(self):
+        self.spawn("to", "list", "files", stream=["```bash\nls", " -la\n```\n", "Lists all files, ", "including hidden ones."])
+        self.assertEqual(self.finish(), 0)
+        self.assertTrue(self.api.requests[0]["body"]["stream"])
+        self.assertRegex(self.output, r"how ❯.*\(model: ")
+        self.assertIn("Lists all files, including hidden ones.", self.output)
+        self.assertRegex(self.output, r"Suggested command:.*🟢 safe.*copied to clipboard.*how run")
+        self.assertNotRegex(self.output, r"\] run|type run")
+        self.assertEqual(self.clipboard.read_text(), "ls -la")
+        self.assertEqual(self.how("log", "--path").returncode, 0)
+        self.assertEqual([e["event"] for e in self.log_entries()], ["answer", "copy"])
+
+    def test_streamed_dont_know_is_not_shown_as_an_answer(self):
+        self.spawn("to", "frobnicate", stream=["I don't", " know"])
+        self.assertEqual(self.finish(), 2)
+        self.assertNotIn("Suggested command", self.output)
+        self.assertEqual(self.output.count("I don't know"), 1)  # only the error line
+
+    def test_control_characters_from_the_model_are_dropped(self):
+        self.spawn("to", "list", stream=["```bash\nls\n```\nLists \x1b[31mfiles\x07."])
+        self.assertEqual(self.finish(), 0)
+        self.assertIn("Lists [31mfiles.", self.output)
 
     def test_run_safe_runs_on_enter(self):
         self.ask_then_run("to", "say", "hi", answer="```bash\nprintf 'ran-%s\\n' ok\n```\nPrints a marker.")
