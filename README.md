@@ -37,7 +37,6 @@ omarchy plugin add https://github.com/mtudls/how.git --enable
 
 Enabling the plugin makes `~/.local/bin/how` a link into the plugin checkout. It steps aside if the package is installed.
 
-
 **3. Install script**
 
 <!-- install:script -->
@@ -103,7 +102,7 @@ Every command gets one of three badges:
 
 The badge is computed on your machine by fixed rules. The model never decides it.
 Anything the rules do not recognise is 🟡. A command is 🟢 only if every segment of every pipeline,
-`&&`, `;` and subshell is a known read-only command; redirecting output to a file is never 🟢.
+`&&`, `;` and subshell is a known read-only command; writing output to a file (other than `/dev/null`) is never 🟢.
 
 The command shown is exactly the command executed, through your `$SHELL -c`, in your terminal.
 If it exits non-zero, `how` tells you and exits with the same code.

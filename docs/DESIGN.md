@@ -69,7 +69,7 @@ distilled from the 0.6.6 `classify_command_safety` and its read-only allowlists,
 
 | Level | Rule |
 |---|---|
-| 🟢 safe | Every segment (split on pipes, `&&`, `\|\|`, `;` and subshells) is a known read-only command, with no file redirection |
+| 🟢 safe | Every segment (split on pipes, `&&`, `\|\|`, `;` and subshells) is a known read-only command, with no output written to a file (other than `/dev/null`) |
 | 🟡 modifies | Everything else that is not dangerous, including every command the rules do not know |
 | 🔴 dangerous | Matches a known destructive pattern |
 

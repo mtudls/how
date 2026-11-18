@@ -1,60 +1,159 @@
 name: Release
-run-name: "Release: ${{ github.ref_name }}"
+run-name: "Release ${{ github.ref_name }}"
+
+# Runs when a maintainer pushes a version tag (git tag v1.0.0 && git push origin v1.0.0).
+# Publishes: how, install.sh, PKGBUILD, .SRCINFO and SHA256SUMS.txt on the GitHub
+# release (with build-provenance attestations), then, only if the
+# AUR_SSH_PRIVATE_KEY secret exists, pushes PKGBUILD + .SRCINFO to the AUR
+# package how-omarchy. One-time AUR setup: packaging/README.md.
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
-  workflow_dispatch:
+    tags: ['v*.*.*']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: Build & Publish Release
+    name: Verify, checksum, publish GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write      # create the release
+      id-token: write      # build-provenance attestation
+      attestations: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.x'
 
-      - name: Validate syntax, V&V & Safety
-        run: |
-          python -m py_compile how scripts/transpile_rust.py
-          python tests/test_vv_suite.py
-          python tests/test_safety.py -v
-          bash -n install.sh
-          chmod +x how
-          ./how --version
+      - name: Tag == __version__ == pkgver == manifest version == install.sh default
+        run: python scripts/check_release.py "$GITHUB_REF_NAME"
 
-      - name: Verify installer installs the Python script
+      - name: Tests
         run: |
-          HOW_INSTALL_DIR=/tmp/how-inst ./install.sh
-          /tmp/how-inst/how --version
+          python -m unittest discover -s tests
+          python how --version
 
-      - name: Generate SHA256 Checksums
+      - name: Installer works from the checkout
         run: |
-          sha256sum how install.sh manifest.json Service.qml PKGBUILD > SHA256SUMS.txt
+          HOW_INSTALL_DIR="$RUNNER_TEMP/bin" ./install.sh --local
+          "$RUNNER_TEMP/bin/how" --version
+
+      - name: Pin the tag tarball checksum in PKGBUILD and .SRCINFO
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          sum="$(curl -fsSL --retry 3 "$url" | sha256sum | cut -d' ' -f1)"
+          echo "tarball sha256: $sum"
+          grep -q "^sha256sums=('SKIP')$" PKGBUILD
+          grep -q $'^\tsha256sums = SKIP$' .SRCINFO
+          sed -i "s/^sha256sums=('SKIP')$/sha256sums=('$sum')/" PKGBUILD
+          sed -i "s/^\tsha256sums = SKIP$/\tsha256sums = $sum/" .SRCINFO
+          grep -n sha256sums PKGBUILD .SRCINFO
+
+      - name: SHA256SUMS.txt
+        run: |
+          sha256sum how install.sh PKGBUILD .SRCINFO > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create GitHub Release
+      - name: Build-provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            how
+            install.sh
+            PKGBUILD
+            SHA256SUMS.txt
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             how
             install.sh
-            manifest.json
-            Service.qml
             PKGBUILD
+            .SRCINFO
             SHA256SUMS.txt
           generate_release_notes: true
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+
+      - name: Hand PKGBUILD to the AUR job
+        uses: actions/upload-artifact@v4
+        with:
+          name: aur
+          path: |
+            PKGBUILD
+            .SRCINFO
+          include-hidden-files: true
+          retention-days: 7
+
+  aur:
+    name: Build-test the package; publish to the AUR if configured
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: archlinux:base-devel
+    permissions:
+      contents: read
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      # Published on https://aur.archlinux.org (home page, "SSH key fingerprints").
+      # If the AUR rotates its host key, update this after checking that page.
+      AUR_ED25519_FINGERPRINT: SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+      AUR_GIT_NAME: ${{ vars.AUR_GIT_NAME || 'how release bot' }}
+      AUR_GIT_EMAIL: ${{ vars.AUR_GIT_EMAIL || 'noreply@users.noreply.github.com' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aur
+          path: pkg
+
+      - name: Build and check the package from the release tarball
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed python namcap git openssh
+          useradd -m builder
+          chown -R builder:builder pkg
+          su builder -c 'cd pkg && makepkg --cleanbuild --noconfirm && makepkg --printsrcinfo > .SRCINFO.check'
+          diff -u pkg/.SRCINFO pkg/.SRCINFO.check
+          namcap pkg/PKGBUILD pkg/*.pkg.tar.zst
+          pacman -U --noconfirm pkg/*.pkg.tar.zst
+          how --version
+
+      - name: Publish to the AUR
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set; skipping AUR publish (see packaging/README.md)."
+            exit 0
+          fi
+          install -dm700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
+          got="$(ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2}')"
+          if [ "$got" != "$AUR_ED25519_FINGERPRINT" ]; then
+            echo "::error::aur.archlinux.org host key $got does not match $AUR_ED25519_FINGERPRINT; refusing to push."
+            exit 1
+          fi
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          git clone ssh://aur@aur.archlinux.org/how-omarchy.git aur-repo
+          cp pkg/PKGBUILD pkg/.SRCINFO aur-repo/
+          cd aur-repo
+          git config user.name "$AUR_GIT_NAME"
+          git config user.email "$AUR_GIT_EMAIL"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR already up to date."
+            exit 0
+          fi
+          git commit -m "Update to ${GITHUB_REF_NAME#v}"
+          git push origin HEAD:master
+          echo "::notice::Published how-omarchy ${GITHUB_REF_NAME#v} to the AUR."

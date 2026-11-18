@@ -14,16 +14,20 @@ Thanks for helping. Keep changes small and focused; one idea per pull request.
 
 ```bash
 python3 -m unittest discover -s tests
-ruff check how tests/
-shellcheck install.sh
+ruff check how scripts/ tests/
+flake8 --max-line-length=120 --extend-ignore=E501 how scripts/ tests/
+shellcheck install.sh scripts/plugin-link.sh
+python3 scripts/check_release.py      # versions agree across files, manifest is valid
 ```
+
+CI runs the same checks, the tests on Python 3.9 and the latest 3.x, and `bandit` on `how`.
 
 Tests must not touch your real config or the network: point `HOW_CONFIG_DIR` and `HOW_STATE_DIR` at a
 temporary directory and stub the API.
 
 ## Adding a classifier rule
 
-1. Write the test first. Add the command and its expected level to the classifier tests in `tests/`,
+1. Write the test first. Add the command and its expected level to `tests/test_classify.py`,
    including at least one look-alike that must keep a different level
    (for example `git status` 🟢 next to `git stash drop` 🟡).
 2. Make the smallest change in `classify()` or its allowlists in `how`.

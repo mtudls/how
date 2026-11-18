@@ -27,16 +27,20 @@ safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for
   `--debug`.
 - `HOW_API_URL` for any OpenAI-compatible endpoint; `HOW_STATE_DIR` for the state directory.
 - AUR package `how-omarchy` (PKGBUILD in this repository; published to the AUR after this release).
-- Install script verified against the release's `SHA256SUMS`.
+- Install script rewritten: installs one pinned release, verified against the release's checksum file;
+  `--dry-run`, `--version`, `--uninstall [--purge]`; never uses sudo or edits shell files.
+- Omarchy plugin links `~/.local/bin/how` into the plugin checkout instead of copying it, so
+  `omarchy plugin update io.github.mdsyseng.how` updates `how`.
 - `SECURITY.md` and `CONTRIBUTING.md`.
 
 ### Changed
 
 - Safety levels are `safe`, `modifies` and `dangerous` (was `destructive`). The badge is computed only by
   local rules; unknown commands are 🟡.
-- `how good` / `how bad [note]` show exactly what will be sent and ask before sending.
+- `how good` / `how bad [note]` record the rating in the local log. Sharing it is a separate step: `how`
+  shows the exact text and, after `y`, opens a pre-filled GitHub issue that you submit yourself.
 - `how explain [command]` makes one API call and returns a short breakdown with the badge
-  (previously an offline rule-based breakdown).
+  (previously an offline rule-based breakdown). The badge is shown even without an API key.
 - Each question sends only the question, OS pretty name, shell name and an Omarchy marker, to one host.
 - State moved to `$XDG_STATE_HOME/how/` (`how.log`, `last.json`). Config stays in
   `$XDG_CONFIG_HOME/how/config.json` (default `~/.config/how/config.json`).
@@ -54,8 +58,9 @@ safety badge, run it with one keypress. See [docs/DESIGN.md](docs/DESIGN.md) for
 - Explicit state machine engine (`how fsm`, `--trace`).
 - Subcommands `how where`, `how fix`, `how status`, `how history`, `how bash-history`, `how verbosity`,
   `how feedback`, `how auth`, `how shell-init`, `how test`, `how !`; verbosity flags `-0` and `--low`.
-- Scheduled AI review and self-patching workflows and their documentation (`docs/ASI.md`,
-  `docs/ideas.md`, `docs/requirements.md`).
+- Scheduled AI review and self-patching workflows, the Docker test images, and the old design notes
+  (`docs/ASI.md`, `docs/ideas.md`, `docs/requirements.md`).
+- Webhook and `gh` paths for feedback (`HOW_FEEDBACK_WEBHOOK`).
 
 ### Migration from 0.6.x
 

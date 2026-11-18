@@ -174,8 +174,9 @@ do_install() {
   local target="$install_dir/how" version tmp src sums expected actual reported
 
   check_python
-  [ "$(id -u)" -ne 0 ] || [ "$force" -eq 1 ] ||
-    die "do not run this installer as root; it installs for your user only (use --force to override)."
+  if [ "$(id -u)" -eq 0 ]; then
+    warn "running as root: this installs for root only ($install_dir). No sudo is needed for your own user."
+  fi
 
   # Refuse to silently shadow a packaged /usr/bin/how.
   if [ -e /usr/bin/how ] && [ "$target" != "/usr/bin/how" ]; then
