@@ -171,7 +171,7 @@ path_hint() {
 
 do_install() {
   local install_dir="$1" receipt="$2" dry_run="$3" force="$4" local_src="$5"
-  local target="$install_dir/how" version tmp src sums expected actual reported
+  local target="$install_dir/how" version tmp sums expected actual reported
 
   check_python
   if [ "$(id -u)" -eq 0 ]; then
